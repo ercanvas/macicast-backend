@@ -13,7 +13,13 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises; // Use promises version for async operations
 const os = require('os');
-const { Video } = require('./config/mux');
+
+// Import Mux configuration if STREAM_PROVIDER is 'mux'
+let Video;
+if (process.env.STREAM_PROVIDER === 'mux') {
+    const muxConfig = require('./config/mux');
+    Video = muxConfig.Video;
+}
 
 // Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -287,40 +293,47 @@ async function processNextVideo(streamId) {
     stream.status = 'processing';
     await stream.save();
 
-    // Read the video file
-    const inputFile = await fs.readFile(currentVideo.path);
+    if (process.env.STREAM_PROVIDER === 'mux') {
+        // Mux processing logic
+        // Read the video file
+        const inputFile = await fs.readFile(currentVideo.path);
 
-    // Create Mux Asset
-    const asset = await Video.Assets.create({
-      input: inputFile,
-      playback_policy: 'public',
-      test: false
-    });
+        // Create Mux Asset
+        const asset = await Video.Assets.create({
+            input: inputFile,
+            playback_policy: 'public',
+            test: false
+        });
 
-    // Wait for asset to be ready
-    await new Promise(resolve => {
-      const checkAsset = async () => {
-        const assetStatus = await Video.Assets.get(asset.id);
-        if (assetStatus.status === 'ready') {
-          resolve();
-        } else if (assetStatus.status === 'errored') {
-          throw new Error('Asset processing failed');
-        } else {
-          setTimeout(checkAsset, 5000);
-        }
-      };
-      checkAsset();
-    });
+        // Wait for asset to be ready
+        await new Promise(resolve => {
+            const checkAsset = async () => {
+                const assetStatus = await Video.Assets.get(asset.id);
+                if (assetStatus.status === 'ready') {
+                    resolve();
+                } else if (assetStatus.status === 'errored') {
+                    throw new Error('Asset processing failed');
+                } else {
+                    setTimeout(checkAsset, 5000);
+                }
+            };
+            checkAsset();
+        });
 
-    // Get playback ID
-    const playbackId = asset.playback_ids[0].id;
+        // Get playback ID
+        const playbackId = asset.playback_ids[0].id;
 
-    // Update video with Mux IDs
-    currentVideo.muxAssetId = asset.id;
-    currentVideo.muxPlaybackId = playbackId;
+        // Update video with Mux IDs
+        currentVideo.muxAssetId = asset.id;
+        currentVideo.muxPlaybackId = playbackId;
 
-    // Update stream
-    stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+        // Update stream
+        stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+    } else {
+        // Default test provider
+        stream.playbackUrl = `${process.env.BACKEND_URL}/streams/${stream._id}/playlist.m3u8`;
+    }
+
     stream.status = 'active';
     await stream.save();
 
