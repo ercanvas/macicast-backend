@@ -11,7 +11,8 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs').promises; // Use promises version for async operations
+const fs = require('fs');          // Regular fs for sync operations
+const fsPromises = require('fs').promises;  // Promise-based fs operations
 const os = require('os');
 
 // Import Mux configuration if STREAM_PROVIDER is 'mux'
@@ -295,8 +296,8 @@ async function processNextVideo(streamId) {
 
     if (process.env.STREAM_PROVIDER === 'mux') {
         // Mux processing logic
-        // Read the video file
-        const inputFile = await fs.readFile(currentVideo.path);
+        // Read the video file using promise-based fs
+        const inputFile = await fsPromises.readFile(currentVideo.path);
 
         // Create Mux Asset
         const asset = await Video.Assets.create({
@@ -337,8 +338,8 @@ async function processNextVideo(streamId) {
     stream.status = 'active';
     await stream.save();
 
-    // Clean up local file
-    await fs.unlink(currentVideo.path);
+    // Clean up local file using promise-based fs
+    await fsPromises.unlink(currentVideo.path);
 
   } catch (error) {
     console.error('Video processing error:', error);
