@@ -270,32 +270,22 @@ app.delete('/api/favorites/:channelId', async (req, res) => {
     }
 });
 
-// Update the video upload endpoint
+// Simplify video upload endpoint
 app.post('/api/upload', upload.single('video'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
     }
 
     try {
-        const filePath = path.resolve(req.file.path);
-        console.log('File uploaded to:', filePath);
-
-        // Upload to S3
-        const fileStream = fs.createReadStream(filePath);
-        const uploadParams = {
-            Bucket: process.env.AWS_BUCKET_NAME,
-            Key: path.basename(filePath),
-            Body: fileStream
-        };
-
-        await s3Client.send(new PutObjectCommand(uploadParams));
-        console.log('File uploaded to S3');
+        const filename = req.file.filename;
+        const publicUrl = `${process.env.BACKEND_URL}/temp/${filename}`;
+        console.log('File public URL:', publicUrl);
 
         res.json({
-            path: filePath,
+            path: req.file.path,
             name: req.file.originalname,
             size: req.file.size,
-            s3Key: path.basename(filePath)
+            url: publicUrl
         });
     } catch (error) {
         console.error('Upload error:', error);
@@ -357,15 +347,14 @@ async function processNextVideo(streamId) {
             }
             
             console.log('Processing video with Mux...');
-            
-            try {
-                // Get a signed URL for the video file
-                const signedUrl = await createSignedUrl(currentVideo.path);
-                console.log('Created signed URL for video');
+            const filename = path.basename(currentVideo.path);
+            const publicUrl = `${process.env.BACKEND_URL}/temp/${filename}`;
+            console.log('Video URL:', publicUrl);
 
-                // Create Mux Asset using the signed URL
+            try {
+                // Create Mux Asset using public URL
                 const asset = await Video.Assets.create({
-                    input: signedUrl,
+                    input: publicUrl,
                     playback_policy: ['public']
                 });
 
@@ -380,7 +369,8 @@ async function processNextVideo(streamId) {
                 currentVideo.muxPlaybackId = playbackId;
                 stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
                 stream.status = 'active';
-                
+                await stream.save();
+
             } catch (muxError) {
                 console.error('Mux Asset creation error:', muxError);
                 throw new Error(typeof muxError === 'object' ? JSON.stringify(muxError) : muxError.message);
@@ -390,8 +380,6 @@ async function processNextVideo(streamId) {
             stream.playbackUrl = `${process.env.BACKEND_URL}/streams/${stream._id}/playlist.m3u8`;
             stream.status = 'active';
         }
-
-        await stream.save();
 
         // Clean up local file
         try {
@@ -477,6 +465,9 @@ app.get('/api/stream/list', async (req, res) => {
 app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Add this near other middleware configuration
+app.use('/temp', express.static(TMP_DIR));
 
 // Add this after your other routes
 app.get('/api/mux/test', async (req, res) => {
