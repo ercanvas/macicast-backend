@@ -24,5 +24,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
+  },
+  "config": {
+    "upload_limit": "500mb"
   }
 }

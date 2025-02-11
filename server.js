@@ -269,9 +269,13 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
         const filePath = path.resolve(req.file.path);
         console.log('File uploaded to:', filePath);
 
+        // Verify file exists and is readable
+        await fsPromises.access(filePath, fs.constants.R_OK);
+
         res.json({
             path: filePath,
-            name: req.file.originalname
+            name: req.file.originalname,
+            size: req.file.size
         });
     } catch (error) {
         console.error('Upload error:', error);
@@ -337,14 +341,17 @@ async function processNextVideo(streamId) {
             console.log('Video path:', videoPath);
 
             try {
-                // Create Mux Asset with updated configuration
+                // Read file data
+                const fileData = await fsPromises.readFile(videoPath);
+                const base64Data = fileData.toString('base64');
+
+                // Create Mux Asset with direct file data
                 const asset = await Video.Assets.create({
                     input: [{
-                        type: 'file',
-                        source: videoPath
+                        type: 'direct_upload',
+                        data: base64Data
                     }],
                     playback_policy: ['public']
-                    // Removed deprecated mp4_support option
                 });
 
                 console.log('Mux Asset created:', asset);
