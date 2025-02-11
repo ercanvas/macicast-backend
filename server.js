@@ -8,8 +8,9 @@ const mongoose = require('mongoose');
 const Channel = require('./models/Channel');
 const Favorite = require('./models/Favorite');
 const Stream = require('./models/Stream');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { CloudFront } = require('@aws-sdk/client-cloudfront');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const multer = require('multer');
@@ -153,6 +154,17 @@ const s3Client = new S3Client({
   }
 });
 
+// Add this utility function at the top level
+const createSignedUrl = async (filePath) => {
+    // Create a signed URL that expires in 1 hour
+    const command = new GetObjectCommand({
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: path.basename(filePath),
+        Expires: 3600
+    });
+    return await getSignedUrl(s3Client, command);
+};
+
 // Get all channels
 app.get('/api/channels', async (req, res) => {
     try {
@@ -258,24 +270,32 @@ app.delete('/api/favorites/:channelId', async (req, res) => {
     }
 });
 
-// Video upload endpoint
+// Update the video upload endpoint
 app.post('/api/upload', upload.single('video'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
     }
 
     try {
-        // Get the absolute path of the uploaded file
         const filePath = path.resolve(req.file.path);
         console.log('File uploaded to:', filePath);
 
-        // Verify file exists and is readable
-        await fsPromises.access(filePath, fs.constants.R_OK);
+        // Upload to S3
+        const fileStream = fs.createReadStream(filePath);
+        const uploadParams = {
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: path.basename(filePath),
+            Body: fileStream
+        };
+
+        await s3Client.send(new PutObjectCommand(uploadParams));
+        console.log('File uploaded to S3');
 
         res.json({
             path: filePath,
             name: req.file.originalname,
-            size: req.file.size
+            size: req.file.size,
+            s3Key: path.basename(filePath)
         });
     } catch (error) {
         console.error('Upload error:', error);
@@ -319,7 +339,7 @@ app.post('/api/stream/start', async (req, res) => {
   }
 });
 
-// Helper function to process videos
+// Update the processNextVideo function
 async function processNextVideo(streamId) {
     const stream = await Stream.findById(streamId);
     if (!stream || stream.status === 'stopped') return;
@@ -333,24 +353,19 @@ async function processNextVideo(streamId) {
 
         if (process.env.STREAM_PROVIDER === 'mux') {
             if (!Video || !Video.Assets) {
-                throw new Error('Mux Video client not available. Please check your configuration.');
+                throw new Error('Mux Video client not available');
             }
             
             console.log('Processing video with Mux...');
-            const videoPath = currentVideo.path;
-            console.log('Video path:', videoPath);
-
+            
             try {
-                // Read file data
-                const fileData = await fsPromises.readFile(videoPath);
-                const base64Data = fileData.toString('base64');
+                // Get a signed URL for the video file
+                const signedUrl = await createSignedUrl(currentVideo.path);
+                console.log('Created signed URL for video');
 
-                // Create Mux Asset with direct file data
+                // Create Mux Asset using the signed URL
                 const asset = await Video.Assets.create({
-                    input: [{
-                        type: 'direct_upload',
-                        data: base64Data
-                    }],
+                    input: signedUrl,
                     playback_policy: ['public']
                 });
 
@@ -360,39 +375,30 @@ async function processNextVideo(streamId) {
                     throw new Error('Invalid asset response from Mux');
                 }
 
-                // Get playback ID
                 const playbackId = asset.playback_ids[0].id;
-
-                // Update video with Mux IDs
                 currentVideo.muxAssetId = asset.id;
                 currentVideo.muxPlaybackId = playbackId;
-
-                // Update stream with HLS URL
                 stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
                 stream.status = 'active';
-                await stream.save();
-
+                
             } catch (muxError) {
                 console.error('Mux Asset creation error:', muxError);
-                const errorMessage = typeof muxError === 'object' ? JSON.stringify(muxError) : muxError.message;
-                throw new Error(`Failed to create Mux asset: ${errorMessage}`);
+                throw new Error(typeof muxError === 'object' ? JSON.stringify(muxError) : muxError.message);
             }
         } else {
-            // Default test provider
-            console.log('Processing video with default provider...');
+            // Default test provider code...
             stream.playbackUrl = `${process.env.BACKEND_URL}/streams/${stream._id}/playlist.m3u8`;
             stream.status = 'active';
         }
 
         await stream.save();
 
-        // Clean up local file only after successful processing
+        // Clean up local file
         try {
             await fsPromises.unlink(currentVideo.path);
             console.log('Cleaned up local file:', currentVideo.path);
         } catch (unlinkError) {
             console.error('Error cleaning up file:', unlinkError);
-            // Don't throw here, as the stream is already processed
         }
 
     } catch (error) {
