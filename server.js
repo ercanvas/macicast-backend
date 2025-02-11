@@ -7,13 +7,38 @@ const Favorite = require('./models/Favorite');
 
 dotenv.config();
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URL, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
-.then(() => console.log('✅ Connected to MongoDB'))
-.catch(err => console.error('❌ MongoDB connection error:', err));
+// Use public MongoDB URL for Render deployment
+const mongoUrl = process.env.MONGO_PUBLIC_URL || process.env.MONGO_URL;
+
+// Connect to MongoDB with updated configuration
+mongoose.connect(mongoUrl)
+    .then(() => console.log('✅ Connected to MongoDB'))
+    .catch(err => {
+        console.error('❌ MongoDB connection error:', err);
+        process.exit(1); // Exit if cannot connect to database
+    });
+
+// Add MongoDB connection error handler
+mongoose.connection.on('error', (err) => {
+    console.error('MongoDB connection error:', err);
+});
+
+// Add MongoDB disconnection handler
+mongoose.connection.on('disconnected', () => {
+    console.log('MongoDB disconnected');
+});
+
+// Add process handlers for graceful shutdown
+process.on('SIGINT', async () => {
+    try {
+        await mongoose.connection.close();
+        console.log('MongoDB connection closed through app termination');
+        process.exit(0);
+    } catch (err) {
+        console.error('Error during shutdown:', err);
+        process.exit(1);
+    }
+});
 
 const app = express();
 
