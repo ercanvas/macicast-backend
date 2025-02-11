@@ -4,15 +4,19 @@ const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 const Channel = require('./models/Channel');
 const Favorite = require('./models/Favorite');
-const Stream = require('./models/Stream'); // Add this import at the top
+const Stream = require('./models/Stream');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { CloudFront } = require('@aws-sdk/client-cloudfront');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-ffmpeg.setFfmpegPath(ffmpegPath);
-const os = require('os'); // Add this import
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs').promises; // Use promises version for async operations
+const os = require('os');
 const { Video } = require('./config/mux');
-const fs = require('fs').promises;
+
+// Set FFmpeg path
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 dotenv.config();
 
@@ -66,11 +70,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Import required libraries for video handling
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
 // Ensure required directories exist
 const ensureDirectories = () => {
