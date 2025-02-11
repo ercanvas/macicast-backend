@@ -1,39 +1,30 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const path = require('path');
-const knex = require('knex');
+const mongoose = require('mongoose');
+const Channel = require('./models/Channel');
+const Favorite = require('./models/Favorite');
 
-// Load environment variables
 dotenv.config();
 
-// Database configuration
-const db = knex({
-    client: 'mysql2',
-    connection: {
-        host: process.env.DB_HOST,
-        user: process.env.DB_USER,
-        password: process.env.DB_PASSWORD,
-        database: process.env.DB_NAME
-    }
-});
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log('✅ Connected to MongoDB'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Create Express app
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
-
 // Get all channels
 app.get('/api/channels', async (req, res) => {
     try {
-        const channels = await db('channels')
-            .where('is_active', true)
-            .orderBy('channel_number', 'asc');
+        const channels = await Channel.find({ is_active: true }).sort('channel_number');
         res.json(channels);
     } catch (error) {
         console.error('Error fetching channels:', error);
@@ -45,14 +36,14 @@ app.get('/api/channels', async (req, res) => {
 app.get('/api/channels/search', async (req, res) => {
     const { q } = req.query;
     try {
-        const channels = await db('channels')
-            .where('is_active', true)
-            .andWhere(function() {
-                this.where('name', 'like', `%${q}%`)
-                    .orWhere('channel_number', 'like', `%${q}%`)
-                    .orWhere('category', 'like', `%${q}%`);
-            })
-            .orderBy('channel_number', 'asc');
+        const channels = await Channel.find({
+            is_active: true,
+            $or: [
+                { name: { $regex: q, $options: 'i' } },
+                { channel_number: { $regex: q, $options: 'i' } },
+                { category: { $regex: q, $options: 'i' } }
+            ]
+        }).sort('channel_number');
         res.json(channels);
     } catch (error) {
         console.error('Error searching channels:', error);
@@ -62,20 +53,9 @@ app.get('/api/channels/search', async (req, res) => {
 
 // Add a new channel
 app.post('/api/channels', async (req, res) => {
-    const { name, channel_number, stream_url, logo_url, category } = req.body;
     try {
-        const [id] = await db('channels').insert({
-            name,
-            channel_number,
-            stream_url,
-            logo_url,
-            category,
-            is_active: true,
-            is_hls: true,
-            created_at: new Date()
-        });
-        
-        const channel = await db('channels').where({ id }).first();
+        const channel = new Channel(req.body);
+        await channel.save();
         res.json({ message: 'Channel added successfully', channel });
     } catch (error) {
         console.error('Error adding channel:', error);
@@ -85,22 +65,12 @@ app.post('/api/channels', async (req, res) => {
 
 // Update a channel
 app.put('/api/channels/:id', async (req, res) => {
-    const { id } = req.params;
-    const { name, channel_number, stream_url, logo_url, category, is_active } = req.body;
     try {
-        await db('channels')
-            .where({ id })
-            .update({
-                name,
-                channel_number,
-                stream_url,
-                logo_url,
-                category,
-                is_active,
-                updated_at: new Date()
-            });
-        
-        const channel = await db('channels').where({ id }).first();
+        const channel = await Channel.findByIdAndUpdate(
+            req.params.id,
+            req.body,
+            { new: true }
+        );
         res.json({ message: 'Channel updated successfully', channel });
     } catch (error) {
         console.error('Error updating channel:', error);
@@ -110,9 +80,8 @@ app.put('/api/channels/:id', async (req, res) => {
 
 // Delete a channel
 app.delete('/api/channels/:id', async (req, res) => {
-    const { id } = req.params;
     try {
-        await db('channels').where({ id }).delete();
+        await Channel.findByIdAndDelete(req.params.id);
         res.json({ message: 'Channel deleted successfully' });
     } catch (error) {
         console.error('Error deleting channel:', error);
@@ -123,11 +92,11 @@ app.delete('/api/channels/:id', async (req, res) => {
 // Get favorite channels
 app.get('/api/favorites', async (req, res) => {
     try {
-        const favorites = await db('favorites')
-            .join('channels', 'favorites.channel_id', 'channels.id')
-            .where('channels.is_active', true)
-            .select('channels.*');
-        res.json(favorites);
+        const favorites = await Favorite.find()
+            .populate('channel_id')
+            .exec();
+        const channels = favorites.map(f => f.channel_id);
+        res.json(channels);
     } catch (error) {
         console.error('Error fetching favorites:', error);
         res.status(500).json({ error: 'Failed to fetch favorite channels' });
@@ -136,12 +105,9 @@ app.get('/api/favorites', async (req, res) => {
 
 // Add to favorites
 app.post('/api/favorites/:channelId', async (req, res) => {
-    const { channelId } = req.params;
     try {
-        await db('favorites').insert({
-            channel_id: channelId,
-            created_at: new Date()
-        });
+        const favorite = new Favorite({ channel_id: req.params.channelId });
+        await favorite.save();
         res.json({ message: 'Added to favorites' });
     } catch (error) {
         console.error('Error adding to favorites:', error);
@@ -151,9 +117,8 @@ app.post('/api/favorites/:channelId', async (req, res) => {
 
 // Remove from favorites
 app.delete('/api/favorites/:channelId', async (req, res) => {
-    const { channelId } = req.params;
     try {
-        await db('favorites').where({ channel_id: channelId }).delete();
+        await Favorite.findOneAndDelete({ channel_id: req.params.channelId });
         res.json({ message: 'Removed from favorites' });
     } catch (error) {
         console.error('Error removing from favorites:', error);
@@ -170,7 +135,6 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Server setup
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
