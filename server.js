@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 const Channel = require('./models/Channel');
 const Favorite = require('./models/Favorite');
+const Stream = require('./models/Stream'); // Add this import at the top
 
 dotenv.config();
 
@@ -202,14 +203,28 @@ app.post('/api/upload', upload.single('video'), (req, res) => {
 app.post('/api/stream/start', async (req, res) => {
   const { name, videos } = req.body;
   try {
-    // Create a new stream document in MongoDB
-    const stream = await new Stream({
-      name,
-      videos,
-      status: 'active',
-      createdAt: new Date()
-    }).save();
+    // Validate input
+    if (!name || !videos || !Array.isArray(videos)) {
+      return res.status(400).json({ error: 'Invalid stream data' });
+    }
 
+    console.log('Creating stream:', { name, videos }); // Debug log
+
+    // Create a new stream document in MongoDB
+    const stream = new Stream({
+      name,
+      videos: videos.map(video => ({
+        name: video.name,
+        path: video.path
+      })),
+      status: 'active'
+    });
+
+    await stream.save();
+    
+    console.log('Stream created:', stream); // Debug log
+
+    // Send response
     res.json({
       id: stream._id,
       name: stream.name,
@@ -218,7 +233,10 @@ app.post('/api/stream/start', async (req, res) => {
     });
   } catch (error) {
     console.error('Stream start error:', error);
-    res.status(500).json({ error: 'Failed to start stream' });
+    res.status(500).json({ 
+      error: 'Failed to start stream',
+      details: error.message 
+    });
   }
 });
 
@@ -226,14 +244,27 @@ app.post('/api/stream/start', async (req, res) => {
 app.post('/api/stream/stop/:streamId?', async (req, res) => {
   try {
     if (req.params.streamId) {
-      await Stream.findByIdAndUpdate(req.params.streamId, { status: 'stopped' });
+      const stream = await Stream.findByIdAndUpdate(
+        req.params.streamId,
+        { status: 'stopped' },
+        { new: true }
+      );
+      if (!stream) {
+        return res.status(404).json({ error: 'Stream not found' });
+      }
     } else {
-      await Stream.updateMany({ status: 'active' }, { status: 'stopped' });
+      await Stream.updateMany(
+        { status: 'active' },
+        { status: 'stopped' }
+      );
     }
     res.json({ success: true });
   } catch (error) {
     console.error('Stream stop error:', error);
-    res.status(500).json({ error: 'Failed to stop stream' });
+    res.status(500).json({ 
+      error: 'Failed to stop stream',
+      details: error.message 
+    });
   }
 });
 
