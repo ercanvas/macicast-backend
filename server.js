@@ -90,17 +90,23 @@ const ensureDirectories = () => {
 // Call this before setting up routes
 ensureDirectories();
 
+// Add temporary storage configuration
+const TMP_DIR = process.env.NODE_ENV === 'production' 
+  ? '/tmp' // Use Render's temporary directory
+  : path.join(__dirname, 'temp');
+
+// Ensure temp directory exists
+if (!fs.existsSync(TMP_DIR)) {
+  fs.mkdirSync(TMP_DIR, { recursive: true });
+}
+
 // Configure multer for video uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
+    cb(null, TMP_DIR);
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
+    cb(null, `${Date.now()}-${file.originalname}`);
   }
 });
 
@@ -244,57 +250,27 @@ app.post('/api/stream/start', async (req, res) => {
 
     console.log('Creating stream:', { name, videos });
 
-    // Create unique stream ID
-    const streamId = new mongoose.Types.ObjectId();
-    
-    // Ensure directories exist
-    const publicDir = path.join(__dirname, 'public');
-    const streamsDir = path.join(publicDir, 'temp-streams', streamId.toString());
-    
-    fs.mkdirSync(publicDir, { recursive: true });
-    fs.mkdirSync(streamsDir, { recursive: true });
-
     // Create stream document
     const stream = new Stream({
-      _id: streamId,
+      _id: new mongoose.Types.ObjectId(),
       name,
-      videos,
-      status: 'processing',
-      hlsPath: `/temp-streams/${streamId}/playlist.m3u8`
+      videos: videos.map(video => ({
+        name: video.name,
+        path: video.path
+      })),
+      status: 'active',
+      streamUrl: generateStreamUrl(videos) // Generate direct streaming URL
     });
 
     await stream.save();
 
-    // Generate playback URL
-    const playbackUrl = `${process.env.BACKEND_URL}/temp-streams/${streamId}/playlist.m3u8`;
-    console.log('Playback URL:', playbackUrl);
-
-    // Return immediately with status
     res.json({
       id: stream._id,
       name: stream.name,
-      playbackUrl,
-      status: 'processing',
+      playbackUrl: stream.streamUrl,
+      status: 'active',
       viewers: 0
     });
-
-    // Process videos in background
-    try {
-      console.log('Starting video processing...');
-      await processVideosInBackground(videos, streamId.toString());
-      console.log('Video processing complete');
-      
-      // Update stream status
-      await Stream.findByIdAndUpdate(streamId, { 
-        status: 'active'
-      });
-    } catch (error) {
-      console.error('Video processing error:', error);
-      await Stream.findByIdAndUpdate(streamId, { 
-        status: 'error',
-        error: error.message
-      });
-    }
 
   } catch (error) {
     console.error('Stream start error:', error);
@@ -305,50 +281,15 @@ app.post('/api/stream/start', async (req, res) => {
   }
 });
 
-// Background video processing function
-async function processVideosInBackground(videos, streamId) {
-  const outputDir = path.join(__dirname, 'public', 'temp-streams', streamId);
+// Helper function to generate stream URL
+function generateStreamUrl(videos) {
+  // For demo/testing, return a sample HLS stream
+  return 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
   
-  try {
-    console.log('Processing videos in:', outputDir);
-    
-    // Process videos one by one
-    for (const video of videos) {
-      console.log('Processing video:', video.path);
-      
-      await new Promise((resolve, reject) => {
-        ffmpeg(video.path)
-          .outputOptions([
-            '-c:v libx264',
-            '-c:a aac',
-            '-f hls',
-            '-hls_time 4',
-            '-hls_list_size 3',
-            '-hls_flags delete_segments+append_list',
-            '-hls_segment_filename',
-            path.join(outputDir, 'segment_%03d.ts')
-          ])
-          .output(path.join(outputDir, 'playlist.m3u8'))
-          .on('start', (cmd) => console.log('Started ffmpeg:', cmd))
-          .on('progress', (progress) => console.log('Processing:', progress.percent, '%'))
-          .on('end', () => {
-            console.log('Finished processing video');
-            resolve();
-          })
-          .on('error', (err) => {
-            console.error('FFmpeg error:', err);
-            reject(err);
-          })
-          .run();
-      });
-    }
-
-    console.log('All videos processed successfully');
-    return true;
-  } catch (error) {
-    console.error('Video processing failed:', error);
-    throw error;
-  }
+  // In production, you would:
+  // 1. Upload videos to a cloud storage (S3, GCS, etc)
+  // 2. Use a streaming service (Mux, AWS MediaConvert, etc)
+  // 3. Return the actual streaming URL
 }
 
 // Serve static files

@@ -11,9 +11,14 @@ const streamSchema = new mongoose.Schema({
   }],
   status: {
     type: String,
-    enum: ['active', 'stopped'],
+    enum: ['active', 'processing', 'error', 'stopped'],
     default: 'active'
   },
+  streamUrl: {
+    type: String,
+    required: true
+  },
+  error: String,
   createdAt: {
     type: Date,
     default: Date.now
