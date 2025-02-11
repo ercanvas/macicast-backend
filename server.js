@@ -333,20 +333,18 @@ async function processNextVideo(streamId) {
             }
             
             console.log('Processing video with Mux...');
-            
-            // Create a file URL or direct upload to Mux
             const videoPath = currentVideo.path;
             console.log('Video path:', videoPath);
 
             try {
-                // Create Mux Asset using file path as input
+                // Create Mux Asset with updated configuration
                 const asset = await Video.Assets.create({
                     input: [{
                         type: 'file',
                         source: videoPath
                     }],
-                    playback_policy: ['public'],
-                    mp4_support: 'standard'
+                    playback_policy: ['public']
+                    // Removed deprecated mp4_support option
                 });
 
                 console.log('Mux Asset created:', asset);
@@ -362,14 +360,14 @@ async function processNextVideo(streamId) {
                 currentVideo.muxAssetId = asset.id;
                 currentVideo.muxPlaybackId = playbackId;
 
-                // Update stream
-                stream.playbackUrl = `https://stream.mux.com/${playbackId}/low.m3u8`;
+                // Update stream with HLS URL
+                stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
                 stream.status = 'active';
                 await stream.save();
 
             } catch (muxError) {
                 console.error('Mux Asset creation error:', muxError);
-                const errorMessage = muxError.message || JSON.stringify(muxError);
+                const errorMessage = typeof muxError === 'object' ? JSON.stringify(muxError) : muxError.message;
                 throw new Error(`Failed to create Mux asset: ${errorMessage}`);
             }
         } else {
