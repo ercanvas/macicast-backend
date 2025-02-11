@@ -42,9 +42,45 @@ process.on('SIGINT', async () => {
 
 const app = express();
 
-app.use(cors());
+const corsOptions = {
+  origin: [
+    'https://macicast.vercel.app',
+    'http://localhost:5173', // Development
+    'http://localhost:4173'  // Preview
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
+  credentials: true,
+  maxAge: 86400 // Cache preflight requests for 24 hours
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Import required libraries for video handling
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for video uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+});
 
 // Get all channels
 app.get('/api/channels', async (req, res) => {
@@ -149,6 +185,72 @@ app.delete('/api/favorites/:channelId', async (req, res) => {
         console.error('Error removing from favorites:', error);
         res.status(500).json({ error: 'Failed to remove from favorites' });
     }
+});
+
+// Video upload endpoint
+app.post('/api/upload', upload.single('video'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  res.json({
+    path: req.file.path,
+    name: req.file.originalname
+  });
+});
+
+// Start stream endpoint
+app.post('/api/stream/start', async (req, res) => {
+  const { name, videos } = req.body;
+  try {
+    // Create a new stream document in MongoDB
+    const stream = await new Stream({
+      name,
+      videos,
+      status: 'active',
+      createdAt: new Date()
+    }).save();
+
+    res.json({
+      id: stream._id,
+      name: stream.name,
+      playbackUrl: `${process.env.FRONTEND_URL}/stream/${stream._id}`,
+      viewers: 0
+    });
+  } catch (error) {
+    console.error('Stream start error:', error);
+    res.status(500).json({ error: 'Failed to start stream' });
+  }
+});
+
+// Stop stream endpoint
+app.post('/api/stream/stop/:streamId?', async (req, res) => {
+  try {
+    if (req.params.streamId) {
+      await Stream.findByIdAndUpdate(req.params.streamId, { status: 'stopped' });
+    } else {
+      await Stream.updateMany({ status: 'active' }, { status: 'stopped' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Stream stop error:', error);
+    res.status(500).json({ error: 'Failed to stop stream' });
+  }
+});
+
+// Get active streams
+app.get('/api/stream/list', async (req, res) => {
+  try {
+    const streams = await Stream.find({ status: 'active' });
+    res.json(streams.map(stream => ({
+      id: stream._id,
+      name: stream.name,
+      playbackUrl: `${process.env.FRONTEND_URL}/stream/${stream._id}`,
+      viewers: 0
+    })));
+  } catch (error) {
+    console.error('Stream list error:', error);
+    res.status(500).json({ error: 'Failed to get streams' });
+  }
 });
 
 // Error handling middleware
