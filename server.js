@@ -10,6 +10,7 @@ const { CloudFront } = require('@aws-sdk/client-cloudfront');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegPath);
+const os = require('os'); // Add this import
 
 dotenv.config();
 
@@ -68,6 +69,26 @@ app.use(express.urlencoded({ extended: true }));
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+
+// Ensure required directories exist
+const ensureDirectories = () => {
+  const dirs = [
+    path.join(__dirname, 'public'),
+    path.join(__dirname, 'public/temp-streams'),
+    path.join(__dirname, 'public/streams'),
+    path.join(__dirname, 'uploads')
+  ];
+
+  dirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      console.log(`Creating directory: ${dir}`);
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  });
+};
+
+// Call this before setting up routes
+ensureDirectories();
 
 // Configure multer for video uploads
 const storage = multer.diskStorage({
@@ -226,33 +247,54 @@ app.post('/api/stream/start', async (req, res) => {
     // Create unique stream ID
     const streamId = new mongoose.Types.ObjectId();
     
-    // Create stream document first
+    // Ensure directories exist
+    const publicDir = path.join(__dirname, 'public');
+    const streamsDir = path.join(publicDir, 'temp-streams', streamId.toString());
+    
+    fs.mkdirSync(publicDir, { recursive: true });
+    fs.mkdirSync(streamsDir, { recursive: true });
+
+    // Create stream document
     const stream = new Stream({
       _id: streamId,
       name,
       videos,
-      status: 'active',
-      hlsPath: `${streamId}/playlist.m3u8`
+      status: 'processing',
+      hlsPath: `/temp-streams/${streamId}/playlist.m3u8`
     });
 
     await stream.save();
 
-    // Generate temporary direct playback URL
+    // Generate playback URL
     const playbackUrl = `${process.env.BACKEND_URL}/temp-streams/${streamId}/playlist.m3u8`;
+    console.log('Playback URL:', playbackUrl);
 
-    // Return immediately with temporary URL
+    // Return immediately with status
     res.json({
       id: stream._id,
       name: stream.name,
       playbackUrl,
+      status: 'processing',
       viewers: 0
     });
 
     // Process videos in background
-    processVideosInBackground(videos, streamId).catch(error => {
-      console.error('Background video processing error:', error);
-      Stream.findByIdAndUpdate(streamId, { status: 'error' }).catch(console.error);
-    });
+    try {
+      console.log('Starting video processing...');
+      await processVideosInBackground(videos, streamId.toString());
+      console.log('Video processing complete');
+      
+      // Update stream status
+      await Stream.findByIdAndUpdate(streamId, { 
+        status: 'active'
+      });
+    } catch (error) {
+      console.error('Video processing error:', error);
+      await Stream.findByIdAndUpdate(streamId, { 
+        status: 'error',
+        error: error.message
+      });
+    }
 
   } catch (error) {
     console.error('Stream start error:', error);
@@ -265,13 +307,15 @@ app.post('/api/stream/start', async (req, res) => {
 
 // Background video processing function
 async function processVideosInBackground(videos, streamId) {
+  const outputDir = path.join(__dirname, 'public', 'temp-streams', streamId);
+  
   try {
-    // Create temporary processing directory
-    const tempDir = path.join(os.tmpdir(), streamId.toString());
-    fs.mkdirSync(tempDir, { recursive: true });
-
+    console.log('Processing videos in:', outputDir);
+    
     // Process videos one by one
     for (const video of videos) {
+      console.log('Processing video:', video.path);
+      
       await new Promise((resolve, reject) => {
         ffmpeg(video.path)
           .outputOptions([
@@ -280,41 +324,37 @@ async function processVideosInBackground(videos, streamId) {
             '-f hls',
             '-hls_time 4',
             '-hls_list_size 3',
-            '-hls_flags delete_segments'
+            '-hls_flags delete_segments+append_list',
+            '-hls_segment_filename',
+            path.join(outputDir, 'segment_%03d.ts')
           ])
-          .output(path.join(tempDir, 'playlist.m3u8'))
-          .on('end', resolve)
-          .on('error', reject)
+          .output(path.join(outputDir, 'playlist.m3u8'))
+          .on('start', (cmd) => console.log('Started ffmpeg:', cmd))
+          .on('progress', (progress) => console.log('Processing:', progress.percent, '%'))
+          .on('end', () => {
+            console.log('Finished processing video');
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error('FFmpeg error:', err);
+            reject(err);
+          })
           .run();
       });
     }
 
-    // Upload processed files to S3 or serve directly
-    const outputDir = path.join(__dirname, 'public', 'streams', streamId.toString());
-    fs.mkdirSync(outputDir, { recursive: true });
-    fs.copyFileSync(
-      path.join(tempDir, 'playlist.m3u8'),
-      path.join(outputDir, 'playlist.m3u8')
-    );
-
-    // Update stream status
-    await Stream.findByIdAndUpdate(streamId, { 
-      status: 'ready',
-      hlsPath: `/streams/${streamId}/playlist.m3u8`
-    });
-
-    // Cleanup
-    fs.rmSync(tempDir, { recursive: true, force: true });
-
+    console.log('All videos processed successfully');
+    return true;
   } catch (error) {
-    console.error('Video processing error:', error);
+    console.error('Video processing failed:', error);
     throw error;
   }
 }
 
-// Serve HLS streams
+// Serve static files
 app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Stop stream endpoint
 app.post('/api/stream/stop/:streamId?', async (req, res) => {
