@@ -1,28 +1,25 @@
 const mongoose = require('mongoose');
 
 const streamSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true
-  },
+  name: { type: String, required: true },
   videos: [{
     name: String,
-    path: String
+    path: String,
+    muxAssetId: String,
+    muxPlaybackId: String
   }],
   status: {
     type: String,
-    enum: ['active', 'processing', 'error', 'stopped'],
-    default: 'active'
+    enum: ['queued', 'processing', 'active', 'error', 'stopped'],
+    default: 'queued'
   },
-  streamUrl: {
-    type: String,
-    required: true
+  currentVideoIndex: {
+    type: Number,
+    default: 0
   },
+  playbackUrl: String,
   error: String,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
+  createdAt: { type: Date, default: Date.now }
 });
 
 module.exports = mongoose.model('Stream', streamSchema);

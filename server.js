@@ -11,6 +11,8 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 ffmpeg.setFfmpegPath(ffmpegPath);
 const os = require('os'); // Add this import
+const { Video } = require('./config/mux');
+const fs = require('fs').promises;
 
 dotenv.config();
 
@@ -244,58 +246,115 @@ app.post('/api/upload', upload.single('video'), (req, res) => {
 app.post('/api/stream/start', async (req, res) => {
   const { name, videos } = req.body;
   try {
-    if (!name || !videos || !Array.isArray(videos)) {
+    if (!name || !videos?.length) {
       return res.status(400).json({ error: 'Invalid stream data' });
     }
 
-    console.log('Creating stream:', { name, videos });
-
     // Create stream document
     const stream = new Stream({
-      _id: new mongoose.Types.ObjectId(),
       name,
-      videos: videos.map(video => ({
-        name: video.name,
-        path: video.path
-      })),
-      status: 'active',
-      streamUrl: generateStreamUrl(videos) // Generate direct streaming URL
+      videos: videos.map(v => ({ name: v.name, path: v.path })),
+      status: 'queued'
     });
 
     await stream.save();
 
+    // Start processing first video
+    processNextVideo(stream._id).catch(console.error);
+
     res.json({
       id: stream._id,
       name: stream.name,
-      playbackUrl: stream.streamUrl,
-      status: 'active',
-      viewers: 0
+      status: 'queued',
+      message: 'Stream creation started'
     });
 
   } catch (error) {
     console.error('Stream start error:', error);
-    res.status(500).json({ 
-      error: 'Failed to start stream',
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Failed to start stream' });
   }
 });
 
-// Helper function to generate stream URL
-function generateStreamUrl(videos) {
-  // For demo/testing, return a sample HLS stream
-  return 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
-  
-  // In production, you would:
-  // 1. Upload videos to a cloud storage (S3, GCS, etc)
-  // 2. Use a streaming service (Mux, AWS MediaConvert, etc)
-  // 3. Return the actual streaming URL
+// Helper function to process videos
+async function processNextVideo(streamId) {
+  const stream = await Stream.findById(streamId);
+  if (!stream || stream.status === 'stopped') return;
+
+  const currentVideo = stream.videos[stream.currentVideoIndex];
+  if (!currentVideo) return;
+
+  try {
+    // Update status to processing
+    stream.status = 'processing';
+    await stream.save();
+
+    // Read the video file
+    const inputFile = await fs.readFile(currentVideo.path);
+
+    // Create Mux Asset
+    const asset = await Video.Assets.create({
+      input: inputFile,
+      playback_policy: 'public',
+      test: false
+    });
+
+    // Wait for asset to be ready
+    await new Promise(resolve => {
+      const checkAsset = async () => {
+        const assetStatus = await Video.Assets.get(asset.id);
+        if (assetStatus.status === 'ready') {
+          resolve();
+        } else if (assetStatus.status === 'errored') {
+          throw new Error('Asset processing failed');
+        } else {
+          setTimeout(checkAsset, 5000);
+        }
+      };
+      checkAsset();
+    });
+
+    // Get playback ID
+    const playbackId = asset.playback_ids[0].id;
+
+    // Update video with Mux IDs
+    currentVideo.muxAssetId = asset.id;
+    currentVideo.muxPlaybackId = playbackId;
+
+    // Update stream
+    stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+    stream.status = 'active';
+    await stream.save();
+
+    // Clean up local file
+    await fs.unlink(currentVideo.path);
+
+  } catch (error) {
+    console.error('Video processing error:', error);
+    stream.status = 'error';
+    stream.error = error.message;
+    await stream.save();
+  }
 }
 
-// Serve static files
-app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
-app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Add status check endpoint
+app.get('/api/stream/:streamId/status', async (req, res) => {
+  try {
+    const stream = await Stream.findById(req.params.streamId);
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+
+    res.json({
+      id: stream._id,
+      name: stream.name,
+      status: stream.status,
+      playbackUrl: stream.playbackUrl,
+      error: stream.error
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get stream status' });
+  }
+});
 
 // Stop stream endpoint
 app.post('/api/stream/stop/:streamId?', async (req, res) => {
@@ -340,6 +399,11 @@ app.get('/api/stream/list', async (req, res) => {
     res.status(500).json({ error: 'Failed to get streams' });
   }
 });
+
+// Serve static files
+app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
+app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

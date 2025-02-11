@@ -8,6 +8,10 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudfront": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@mux/mux-node": "^9.0.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
@@ -16,10 +20,7 @@
     "mongoose": "^8.10.0",
     "multer": "^1.4.5-lts.1",
     "nodemon": "^3.0.2",
-    "sqlite3": "^5.1.7",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "@aws-sdk/client-s3": "^3.0.0",
-    "@aws-sdk/client-cloudfront": "^3.0.0"
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
