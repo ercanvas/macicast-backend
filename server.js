@@ -438,6 +438,29 @@ app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Add this after your other routes
+app.get('/api/mux/test', async (req, res) => {
+    try {
+        if (!Video || !Video.Assets) {
+            throw new Error('Mux Video client not initialized');
+        }
+        
+        // Test listing assets
+        const assets = await Video.Assets.list({ limit: 1 });
+        res.json({
+            status: 'success',
+            message: 'Mux connection successful',
+            data: { assetsCount: assets.length }
+        });
+    } catch (error) {
+        console.error('Mux test error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
