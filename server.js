@@ -203,32 +203,61 @@ app.post('/api/upload', upload.single('video'), (req, res) => {
 app.post('/api/stream/start', async (req, res) => {
   const { name, videos } = req.body;
   try {
-    // Validate input
     if (!name || !videos || !Array.isArray(videos)) {
       return res.status(400).json({ error: 'Invalid stream data' });
     }
 
-    console.log('Creating stream:', { name, videos }); // Debug log
+    console.log('Creating stream:', { name, videos });
 
-    // Create a new stream document in MongoDB
+    // Create HLS output directory
+    const streamId = mongoose.Types.ObjectId();
+    const hlsDir = path.join(__dirname, 'public', 'streams', streamId.toString());
+    fs.mkdirSync(hlsDir, { recursive: true });
+
+    // Create HLS playlist
+    const ffmpeg = require('fluent-ffmpeg');
+    const command = ffmpeg();
+
+    // Add input videos
+    videos.forEach(video => {
+      command.input(video.path);
+    });
+
+    // Configure HLS output
+    command
+      .outputOptions([
+        '-c:v libx264',
+        '-c:a aac',
+        '-f hls',
+        '-hls_time 4',
+        '-hls_list_size 3',
+        '-hls_flags delete_segments',
+        '-hls_segment_filename',
+        `${hlsDir}/segment_%03d.ts`
+      ])
+      .output(`${hlsDir}/playlist.m3u8`);
+
+    // Start conversion
+    command.run();
+
+    // Create stream document
     const stream = new Stream({
+      _id: streamId,
       name,
-      videos: videos.map(video => ({
-        name: video.name,
-        path: video.path
-      })),
-      status: 'active'
+      videos,
+      status: 'active',
+      hlsPath: `/streams/${streamId}/playlist.m3u8`
     });
 
     await stream.save();
     
-    console.log('Stream created:', stream); // Debug log
-
-    // Send response
+    // Generate public URL
+    const publicUrl = `${process.env.BACKEND_URL || 'http://localhost:3000'}/streams/${streamId}/playlist.m3u8`;
+    
     res.json({
       id: stream._id,
       name: stream.name,
-      playbackUrl: `${process.env.FRONTEND_URL}/stream/${stream._id}`,
+      playbackUrl: publicUrl,
       viewers: 0
     });
   } catch (error) {
@@ -239,6 +268,9 @@ app.post('/api/stream/start', async (req, res) => {
     });
   }
 });
+
+// Serve HLS streams
+app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 
 // Stop stream endpoint
 app.post('/api/stream/stop/:streamId?', async (req, res) => {
