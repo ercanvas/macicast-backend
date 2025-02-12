@@ -349,15 +349,20 @@ async function processNextVideo(streamId) {
                 currentVideo.muxAssetId = asset.id;
                 currentVideo.muxPlaybackId = playbackId;
                 
-                // Update stream with additional required properties
-                stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+                // Update stream with HLS URL
+                const hlsUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+                stream.playbackUrl = hlsUrl;
                 stream.status = 'active';
-                stream.streams = stream.streams || [];  // Initialize streams array if not exists
-                stream.streams.push({
-                    id: playbackId,
-                    url: `https://stream.mux.com/${playbackId}.m3u8`,
-                    type: 'live'
+
+                // Add as first user stream
+                await stream.addUserStream({
+                    id: stream._id.toString(),
+                    name: stream.name,
+                    url: hlsUrl,
+                    type: 'live',
+                    status: 'active'
                 });
+
                 await stream.save();
 
             } catch (muxError) {
@@ -403,9 +408,9 @@ app.get('/api/stream/:streamId/status', async (req, res) => {
             id: stream._id,
             name: stream.name,
             status: stream.status,
-            type: stream.type || 'live',
-            streams: stream.streams || [],
             playbackUrl: stream.playbackUrl,
+            type: 'channel',
+            userStreams: stream.userStreams || [],
             error: stream.error
         });
     } catch (error) {
@@ -448,10 +453,8 @@ app.get('/api/stream/list', async (req, res) => {
     res.json(streams.map(stream => ({
       id: stream._id,
       name: stream.name,
+      type: 'channel',
       playbackUrl: stream.playbackUrl,
-      thumbnail: stream.thumbnail,
-      type: stream.type || 'live',
-      viewers: stream.viewers || 0,
       userStreams: stream.userStreams || []
     })));
   } catch (error) {
@@ -495,29 +498,28 @@ app.post('/api/stream/:streamId/user', async (req, res) => {
 // Update add stream endpoint
 app.post('/api/stream/:streamId/streams', async (req, res) => {
     try {
-        const { url } = req.body;
+        const { id, name, url, type = 'user-stream' } = req.body;
         const stream = await Stream.findById(req.params.streamId);
         
         if (!stream) {
             return res.status(404).json({ error: 'Stream not found' });
         }
 
-        stream.streams = stream.streams || [];
-        stream.streams.push({
-            id: Date.now().toString(),
+        await stream.addUserStream({
+            id: id || Date.now().toString(),
+            name,
             url,
-            type: 'live'
+            type,
+            status: 'active'
         });
-        
-        await stream.save();
         
         res.json({
             id: stream._id,
             name: stream.name,
             status: stream.status,
-            type: stream.type,
-            streams: stream.streams,
-            playbackUrl: stream.playbackUrl
+            type: 'channel',
+            playbackUrl: stream.playbackUrl,
+            userStreams: stream.userStreams
         });
     } catch (error) {
         console.error('Error adding stream:', error);
