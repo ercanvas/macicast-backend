@@ -389,25 +389,26 @@ async function processNextVideo(streamId) {
 
 // Add status check endpoint
 app.get('/api/stream/:streamId/status', async (req, res) => {
-  try {
-    const stream = await Stream.findById(req.params.streamId);
-    if (!stream) {
-      return res.status(404).json({ error: 'Stream not found' });
-    }
+    try {
+        const stream = await Stream.findById(req.params.streamId);
+        if (!stream) {
+            return res.status(404).json({ error: 'Stream not found' });
+        }
 
-    res.json({
-      id: stream._id,
-      name: stream.name,
-      status: stream.status,
-      playbackUrl: stream.playbackUrl,
-      thumbnail: stream.thumbnail,
-      type: stream.type || 'live',
-      viewers: stream.viewers || 0,
-      error: stream.error
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to get stream status' });
-  }
+        res.json({
+            id: stream._id,
+            name: stream.name,
+            status: stream.status,
+            playbackUrl: stream.playbackUrl,
+            thumbnail: stream.thumbnail,
+            type: stream.type || 'live',
+            viewers: stream.viewers || 0,
+            error: stream.error,
+            userStreams: stream.userStreams || []
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get stream status' });
+    }
 });
 
 // Stop stream endpoint
@@ -448,12 +449,45 @@ app.get('/api/stream/list', async (req, res) => {
       playbackUrl: stream.playbackUrl,
       thumbnail: stream.thumbnail,
       type: stream.type || 'live',
-      viewers: stream.viewers || 0
+      viewers: stream.viewers || 0,
+      userStreams: stream.userStreams || []
     })));
   } catch (error) {
     console.error('Stream list error:', error);
     res.status(500).json({ error: 'Failed to get streams' });
   }
+});
+
+// Add user stream endpoint
+app.post('/api/stream/:streamId/user', async (req, res) => {
+    try {
+        const { userId, playbackUrl } = req.body;
+        const stream = await Stream.findById(req.params.streamId);
+        
+        if (!stream) {
+            return res.status(404).json({ error: 'Stream not found' });
+        }
+
+        await stream.addUserStream(userId, playbackUrl);
+        
+        res.json({
+            success: true,
+            message: 'User stream added',
+            stream: {
+                id: stream._id,
+                name: stream.name,
+                status: stream.status,
+                playbackUrl: stream.playbackUrl,
+                thumbnail: stream.thumbnail,
+                type: stream.type,
+                viewers: stream.viewers,
+                userStreams: stream.userStreams
+            }
+        });
+    } catch (error) {
+        console.error('Error adding user stream:', error);
+        res.status(500).json({ error: 'Failed to add user stream' });
+    }
 });
 
 // Serve static files

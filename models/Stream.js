@@ -22,7 +22,23 @@ const streamSchema = new mongoose.Schema({
   type: { type: String, default: 'live' },
   viewers: { type: Number, default: 0 },
   thumbnail: String,
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  userStreams: [{
+    userId: String,
+    playbackUrl: String,
+    status: String
+  }]
 });
+
+// Add method to handle user streams
+streamSchema.methods.addUserStream = function(userId, playbackUrl) {
+  this.userStreams = this.userStreams || [];
+  this.userStreams.push({
+    userId,
+    playbackUrl,
+    status: 'active'
+  });
+  return this.save();
+};
 
 module.exports = mongoose.model('Stream', streamSchema);
