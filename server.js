@@ -278,35 +278,36 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
 
 // Start stream endpoint
 app.post('/api/stream/start', async (req, res) => {
-  const { name, videos } = req.body;
-  try {
-    if (!name || !videos?.length) {
-      return res.status(400).json({ error: 'Invalid stream data' });
+    const { name, videos } = req.body;
+    try {
+        if (!name || !videos?.length) {
+            return res.status(400).json({ error: 'Invalid stream data' });
+        }
+
+        const stream = new Stream({
+            name,
+            videos: videos.map(v => ({ name: v.name, path: v.path })),
+            status: 'queued',
+            streams: [], // Initialize empty streams array
+            type: 'live'
+        });
+
+        await stream.save();
+        processNextVideo(stream._id).catch(console.error);
+
+        res.json({
+            id: stream._id,
+            name: stream.name,
+            status: 'queued',
+            type: 'live',
+            streams: [],
+            message: 'Stream creation started'
+        });
+
+    } catch (error) {
+        console.error('Stream start error:', error);
+        res.status(500).json({ error: 'Failed to start stream' });
     }
-
-    // Create stream document
-    const stream = new Stream({
-      name,
-      videos: videos.map(v => ({ name: v.name, path: v.path })),
-      status: 'queued'
-    });
-
-    await stream.save();
-
-    // Start processing first video
-    processNextVideo(stream._id).catch(console.error);
-
-    res.json({
-      id: stream._id,
-      name: stream.name,
-      status: 'queued',
-      message: 'Stream creation started'
-    });
-
-  } catch (error) {
-    console.error('Stream start error:', error);
-    res.status(500).json({ error: 'Failed to start stream' });
-  }
 });
 
 // Update the processNextVideo function
@@ -349,11 +350,14 @@ async function processNextVideo(streamId) {
                 currentVideo.muxPlaybackId = playbackId;
                 
                 // Update stream with additional required properties
-                stream.playbackUrl = `https://stream.mux.com/${playbackId}/low.m3u8`;
+                stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
                 stream.status = 'active';
-                stream.type = 'live';
-                stream.viewers = 0;
-                stream.thumbnail = `https://image.mux.com/${playbackId}/thumbnail.jpg`;
+                stream.streams = stream.streams || [];  // Initialize streams array if not exists
+                stream.streams.push({
+                    id: playbackId,
+                    url: `https://stream.mux.com/${playbackId}.m3u8`,
+                    type: 'live'
+                });
                 await stream.save();
 
             } catch (muxError) {
@@ -399,12 +403,10 @@ app.get('/api/stream/:streamId/status', async (req, res) => {
             id: stream._id,
             name: stream.name,
             status: stream.status,
-            playbackUrl: stream.playbackUrl,
-            thumbnail: stream.thumbnail,
             type: stream.type || 'live',
-            viewers: stream.viewers || 0,
-            error: stream.error,
-            userStreams: stream.userStreams || []
+            streams: stream.streams || [],
+            playbackUrl: stream.playbackUrl,
+            error: stream.error
         });
     } catch (error) {
         res.status(500).json({ error: 'Failed to get stream status' });
@@ -487,6 +489,39 @@ app.post('/api/stream/:streamId/user', async (req, res) => {
     } catch (error) {
         console.error('Error adding user stream:', error);
         res.status(500).json({ error: 'Failed to add user stream' });
+    }
+});
+
+// Update add stream endpoint
+app.post('/api/stream/:streamId/streams', async (req, res) => {
+    try {
+        const { url } = req.body;
+        const stream = await Stream.findById(req.params.streamId);
+        
+        if (!stream) {
+            return res.status(404).json({ error: 'Stream not found' });
+        }
+
+        stream.streams = stream.streams || [];
+        stream.streams.push({
+            id: Date.now().toString(),
+            url,
+            type: 'live'
+        });
+        
+        await stream.save();
+        
+        res.json({
+            id: stream._id,
+            name: stream.name,
+            status: stream.status,
+            type: stream.type,
+            streams: stream.streams,
+            playbackUrl: stream.playbackUrl
+        });
+    } catch (error) {
+        console.error('Error adding stream:', error);
+        res.status(500).json({ error: 'Failed to add stream' });
     }
 });
 
