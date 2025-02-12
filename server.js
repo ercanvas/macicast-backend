@@ -8,9 +8,6 @@ const mongoose = require('mongoose');
 const Channel = require('./models/Channel');
 const Favorite = require('./models/Favorite');
 const Stream = require('./models/Stream');
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { CloudFront } = require('@aws-sdk/client-cloudfront');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const multer = require('multer');
@@ -145,25 +142,8 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
 });
 
-// Configure S3
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  }
-});
-
-// Add this utility function at the top level
-const createSignedUrl = async (filePath) => {
-    // Create a signed URL that expires in 1 hour
-    const command = new GetObjectCommand({
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: path.basename(filePath),
-        Expires: 3600
-    });
-    return await getSignedUrl(s3Client, command);
-};
+// Add middleware to serve temp files
+app.use('/temp', express.static(TMP_DIR));
 
 // Get all channels
 app.get('/api/channels', async (req, res) => {
@@ -381,19 +361,24 @@ async function processNextVideo(streamId) {
             stream.status = 'active';
         }
 
-        // Clean up local file
-        try {
-            await fsPromises.unlink(currentVideo.path);
-            console.log('Cleaned up local file:', currentVideo.path);
-        } catch (unlinkError) {
-            console.error('Error cleaning up file:', unlinkError);
-        }
+        await stream.save();
 
     } catch (error) {
         console.error('Video processing error:', error);
         stream.status = 'error';
         stream.error = error.message || 'Unknown error occurred';
         await stream.save();
+        
+        // Don't delete the file if there was an error
+        return;
+    }
+
+    // Clean up local file only after successful processing
+    try {
+        await fsPromises.unlink(currentVideo.path);
+        console.log('Cleaned up local file:', currentVideo.path);
+    } catch (unlinkError) {
+        console.error('Error cleaning up file:', unlinkError);
     }
 }
 
