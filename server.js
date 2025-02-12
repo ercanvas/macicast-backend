@@ -347,8 +347,13 @@ async function processNextVideo(streamId) {
                 const playbackId = asset.playback_ids[0].id;
                 currentVideo.muxAssetId = asset.id;
                 currentVideo.muxPlaybackId = playbackId;
-                stream.playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+                
+                // Update stream with additional required properties
+                stream.playbackUrl = `https://stream.mux.com/${playbackId}/low.m3u8`;
                 stream.status = 'active';
+                stream.type = 'live';
+                stream.viewers = 0;
+                stream.thumbnail = `https://image.mux.com/${playbackId}/thumbnail.jpg`;
                 await stream.save();
 
             } catch (muxError) {
@@ -395,6 +400,9 @@ app.get('/api/stream/:streamId/status', async (req, res) => {
       name: stream.name,
       status: stream.status,
       playbackUrl: stream.playbackUrl,
+      thumbnail: stream.thumbnail,
+      type: stream.type || 'live',
+      viewers: stream.viewers || 0,
       error: stream.error
     });
   } catch (error) {
@@ -437,8 +445,10 @@ app.get('/api/stream/list', async (req, res) => {
     res.json(streams.map(stream => ({
       id: stream._id,
       name: stream.name,
-      playbackUrl: `${process.env.FRONTEND_URL}/stream/${stream._id}`,
-      viewers: 0
+      playbackUrl: stream.playbackUrl,
+      thumbnail: stream.thumbnail,
+      type: stream.type || 'live',
+      viewers: stream.viewers || 0
     })));
   } catch (error) {
     console.error('Stream list error:', error);

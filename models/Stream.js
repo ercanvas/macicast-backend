@@ -19,6 +19,9 @@ const streamSchema = new mongoose.Schema({
   },
   playbackUrl: String,
   error: String,
+  type: { type: String, default: 'live' },
+  viewers: { type: Number, default: 0 },
+  thumbnail: String,
   createdAt: { type: Date, default: Date.now }
 });
 
