@@ -836,42 +836,104 @@ async function processYouTubeVideos(streamId) {
   }
 }
 
-// Serve YouTube HLS stream - modified to use redirect approach
+// Serve YouTube HLS stream - modified to use redirect approach with better error handling
 app.get('/api/youtube/stream/:streamId/playlist.m3u8', async (req, res) => {
   try {
     const stream = await Stream.findById(req.params.streamId);
     
     if (!stream) {
-      return res.status(404).json({ error: 'Stream not found' });
+      console.log(`Stream not found: ${req.params.streamId}`);
+      return res.status(404).json({ 
+        error: 'Stream not found',
+        message: 'The requested stream does not exist in the database',
+        status: 404,
+        streamId: req.params.streamId,
+        fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+      });
     }
     
     if (stream.status !== 'active' || !stream.videos || stream.videos.length === 0) {
-      return res.status(404).json({ error: 'Stream not ready' });
+      console.log(`Stream not ready: ${req.params.streamId}, status: ${stream.status}, videos: ${stream.videos?.length}`);
+      return res.status(404).json({ 
+        error: 'Stream not ready',
+        message: 'The stream exists but is not ready for playback',
+        status: 404,
+        streamStatus: stream.status,
+        videoCount: stream.videos?.length || 0,
+        fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+      });
     }
     
     // Find ready videos
     const readyVideos = stream.videos.filter(v => v.status === 'ready');
     if (readyVideos.length === 0) {
-      return res.status(404).json({ error: 'No videos ready to play' });
+      console.log(`No videos ready to play for stream: ${req.params.streamId}`);
+      return res.status(404).json({ 
+        error: 'No videos ready to play',
+        message: 'The stream has no videos ready for playback',
+        status: 404,
+        streamId: req.params.streamId,
+        fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+      });
     }
     
     // Get a video (either random or sequential based on shuffle setting)
-    const video = stream.getNextYouTubeVideo();
-    await stream.save();
+    let video;
+    try {
+      video = stream.getNextYouTubeVideo();
+      await stream.save();
+    } catch (error) {
+      console.error(`Error getting next YouTube video: ${error.message}`);
+      // If method not found or other error, try to get a video directly
+      const availableVideos = stream.videos.filter(v => v.youtubeId);
+      if (availableVideos.length > 0) {
+        const randomIndex = Math.floor(Math.random() * availableVideos.length);
+        video = availableVideos[randomIndex];
+      } else {
+        console.log('No available videos with youtubeId');
+        return res.status(404).json({ 
+          error: 'No videos available',
+          message: 'No videos with YouTube IDs are available',
+          fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+        });
+      }
+    }
     
     if (!video || !video.path) {
-      return res.status(404).json({ error: 'No video available' });
+      console.log(`No video or path available for stream: ${req.params.streamId}`);
+      return res.status(404).json({ 
+        error: 'No video available',
+        message: 'No video or valid path is available',
+        fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+      });
     }
 
-    // Get the public URL path for our redirect page
-    const publicPath = video.path.replace(__dirname, '').replace(/\\/g, '/');
+    // Check if the file actually exists on disk
+    let publicPath = video.path.replace(__dirname, '').replace(/\\/g, '/');
+    const fullDiskPath = path.join(__dirname, publicPath);
+    
+    if (!fs.existsSync(fullDiskPath)) {
+      console.log(`File does not exist: ${fullDiskPath}`);
+      return res.status(404).json({
+        error: 'File not found',
+        message: 'The video file does not exist on disk',
+        path: publicPath,
+        fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+      });
+    }
+    
     const fullUrl = `${process.env.BACKEND_URL}${publicPath}`;
+    console.log(`Redirecting to: ${fullUrl}`);
     
     // Redirect to the player page
     res.redirect(fullUrl);
   } catch (error) {
     console.error('Error serving YouTube stream:', error);
-    res.status(500).json({ error: 'Failed to serve stream' });
+    res.status(500).json({ 
+      error: 'Failed to serve stream',
+      message: error.message,
+      fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8' // Fallback to a reliable stream
+    });
   }
 });
 

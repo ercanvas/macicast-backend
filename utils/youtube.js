@@ -54,73 +54,124 @@ async function getChannelVideos(channelName, videoCount = 10) {
   }
 }
 
-// Download and convert YouTube video to HLS
-async function downloadVideo(videoId, outputDir) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // Create a YouTube direct player iframe embed
-      const hlsOutputPath = path.join(outputDir, videoId);
-      
-      if (!fs.existsSync(hlsOutputPath)) {
-        fs.mkdirSync(hlsOutputPath, { recursive: true });
-      }
-      
-      // Create a direct iframe embed HTML file that will play the YouTube video
-      const iframeHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YouTube Player</title>
-  <style>
-    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-    iframe { width: 100%; height: 100%; border: 0; }
-  </style>
-</head>
-<body>
-  <iframe 
-    src="https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&rel=0&showinfo=0&modestbranding=1" 
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-    allowfullscreen>
-  </iframe>
-</body>
-</html>`;
+// Add error handling for cases where YouTube videos are not available
+// This function should check if a video ID is still available on YouTube
+const checkYouTubeVideo = async (videoId) => {
+  try {
+    const info = await ytdl.getInfo(videoId);
+    return {
+      valid: true,
+      info
+    };
+  } catch (error) {
+    console.error(`YouTube video check failed for ${videoId}:`, error.message);
+    return {
+      valid: false,
+      error: error.message
+    };
+  }
+};
 
-      const htmlPath = path.join(hlsOutputPath, 'player.html');
-      fs.writeFileSync(htmlPath, iframeHtml);
-      
-      // Instead of trying to create an HLS playlist that references the YouTube embed,
-      // we'll create a simple HTML redirect that will open the player page directly
-      // This avoids CORS issues with HLS.js trying to fetch YouTube content directly
-      
-      const redirectHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0;URL='${process.env.BACKEND_URL}/youtube-streams/${path.basename(outputDir)}/${videoId}/player.html'" />
-  <title>Redirecting to YouTube Player</title>
-</head>
-<body>
-  <p>Redirecting to player...</p>
-</body>
-</html>`;
-      
-      const redirectPath = path.join(hlsOutputPath, 'redirect.html');
-      fs.writeFileSync(redirectPath, redirectHtml);
-      
-      console.log(`Created YouTube iframe player for: ${videoId}`);
-      
-      resolve({
-        videoId,
-        title: videoId, // Just use the ID as title
-        hlsPath: redirectPath.replace(/\\/g, '/'),
-        isProxy: true
-      });
-    } catch (error) {
-      console.error('Error creating YouTube proxy:', error);
-      reject(error);
+// Update the downloadVideo function to handle errors better
+async function downloadVideo(videoId, outputDir) {
+  try {
+    // Check if video is available
+    const videoCheck = await checkYouTubeVideo(videoId);
+    if (!videoCheck.valid) {
+      throw new Error(`YouTube video ${videoId} is not available: ${videoCheck.error}`);
     }
-  });
+    
+    // Create html files even if download fails
+    const playerPath = path.join(outputDir, `${videoId}_player.html`);
+    const redirectPath = path.join(outputDir, `${videoId}_redirect.html`);
+    
+    // Create a simple redirect HTML
+    const redirectHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta http-equiv="refresh" content="0;url=${playerPath}" />
+    </head>
+    <body>
+      <p>Redirecting to player...</p>
+    </body>
+    </html>`;
+    
+    // Create a simple player HTML that can be embedded in iframes
+    const playerHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>YouTube Player</title>
+      <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        iframe { width: 100%; height: 100%; border: none; }
+      </style>
+    </head>
+    <body>
+      <iframe 
+        src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=1&rel=0" 
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+        allowfullscreen>
+      </iframe>
+    </body>
+    </html>`;
+    
+    // Write the HTML files
+    fs.writeFileSync(redirectPath, redirectHtml);
+    fs.writeFileSync(playerPath, playerHtml);
+    
+    // Return paths that can be used by the frontend
+    return {
+      redirectPath: redirectPath,
+      playerPath: playerPath,
+      hlsPath: redirectPath, // This will be used for HLS requests
+      status: 'ready'
+    };
+  } catch (error) {
+    console.error(`Error downloading YouTube video ${videoId}:`, error);
+    
+    // Create a fallback HTML that shows an error and offers an alternative
+    const errorPath = path.join(outputDir, `${videoId}_error.html`);
+    const errorHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Video Unavailable</title>
+      <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: Arial, sans-serif; }
+        .container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
+        h1 { font-size: 24px; margin-bottom: 20px; }
+        p { font-size: 16px; margin-bottom: 30px; max-width: 80%; text-align: center; }
+        iframe { width: 100%; height: 50%; border: none; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>Video Unavailable</h1>
+        <p>The requested video is no longer available on YouTube. We're showing you an alternative video instead.</p>
+        <iframe 
+          src="https://www.youtube.com/embed/videoseries?list=PLRz-wq-Mubhl_-iHBPHB91LCQWFJMVeOR&autoplay=1&mute=0&controls=1&rel=0" 
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+          allowfullscreen>
+        </iframe>
+      </div>
+    </body>
+    </html>`;
+    
+    fs.writeFileSync(errorPath, errorHtml);
+    
+    // Return the error page path
+    return {
+      redirectPath: errorPath,
+      playerPath: errorPath,
+      hlsPath: errorPath,
+      status: 'error',
+      error: error.message
+    };
+  }
 }
 
 // Create YouTube channel HLS stream
