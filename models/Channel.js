@@ -8,6 +8,7 @@ const channelSchema = new mongoose.Schema({
   category: { type: String },
   is_active: { type: Boolean, default: true },
   is_hls: { type: Boolean, default: true },
+  youtube_stream_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Stream' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Channel', channelSchema);
