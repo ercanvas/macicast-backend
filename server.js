@@ -50,12 +50,18 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const mongoUrl = process.env.MONGO_PUBLIC_URL || process.env.MONGO_URL;
 
 // Connect to MongoDB with updated configuration
-mongoose.connect(mongoUrl)
-    .then(() => console.log('✅ Connected to MongoDB'))
-    .catch(err => {
-        console.error('❌ MongoDB connection error:', err);
-        process.exit(1); // Exit if cannot connect to database
-    });
+mongoose.connect(mongoUrl, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 30000, // Timeout after 30 seconds
+    socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+    family: 4 // Use IPv4, skip trying IPv6
+})
+.then(() => console.log('✅ Connected to MongoDB'))
+.catch(err => {
+    console.error('❌ MongoDB connection error:', err);
+    process.exit(1); // Exit if cannot connect to database
+});
 
 // Add MongoDB connection error handler
 mongoose.connection.on('error', (err) => {
@@ -79,6 +85,34 @@ process.on('SIGINT', async () => {
     }
 });
 
+// Function to ensure initial data exists
+const ensureInitialData = async () => {
+    try {
+        // Check if we have any channels
+        const channelCount = await Channel.countDocuments();
+        if (channelCount === 0) {
+            console.log('No channels found, seeding initial data...');
+            try {
+                // Try to load and run seed file
+                const initialChannels = require('./seeds/initial_channels');
+                await initialChannels.seed();
+                console.log('✅ Database seeded successfully');
+            } catch (err) {
+                console.error('Error seeding database:', err);
+            }
+        } else {
+            console.log(`Database has ${channelCount} channels`);
+        }
+    } catch (err) {
+        console.error('Error checking initial data:', err);
+    }
+};
+
+// Run after MongoDB connection is established
+mongoose.connection.once('connected', () => {
+    ensureInitialData();
+});
+
 const app = express();
 
 const corsOptions = {
@@ -96,6 +130,20 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Add CORS headers directly to all responses
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://macicast.vercel.app');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
 
 // Ensure required directories exist
 const ensureDirectories = () => {
@@ -560,6 +608,37 @@ app.use((err, req, res, next) => {
         message: 'Something went wrong!',
         error: process.env.NODE_ENV === 'development' ? err.message : {}
     });
+});
+
+// Add diagnostic endpoint
+app.get('/api/status', async (req, res) => {
+    try {
+        // Check MongoDB connection
+        const mongoStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+        
+        // Basic system info
+        const systemInfo = {
+            platform: os.platform(),
+            arch: os.arch(),
+            memory: {
+                total: Math.round(os.totalmem() / (1024 * 1024)) + 'MB',
+                free: Math.round(os.freemem() / (1024 * 1024)) + 'MB'
+            }
+        };
+
+        res.json({
+            status: 'ok',
+            environment: process.env.NODE_ENV || 'development',
+            mongodb: mongoStatus,
+            system: systemInfo,
+            time: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
 });
 
 const PORT = process.env.PORT || 3000;
