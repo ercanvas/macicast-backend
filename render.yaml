@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: macicast-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: JWT_SECRET
+        fromGroup: macicast-secrets
+      - key: MONGO_PUBLIC_URL
+        fromGroup: macicast-secrets
+      - key: BACKEND_URL
+        value: https://macicast-backend.onrender.com 

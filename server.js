@@ -117,11 +117,7 @@ mongoose.connection.once('connected', () => {
 const app = express();
 
 const corsOptions = {
-  origin: [
-    'https://macicast.vercel.app',
-    'http://localhost:5173', // Development
-    'http://localhost:4173'  // Preview
-  ],
+  origin: '*', // Allow all origins during development - change this for production!
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
   credentials: true,
@@ -134,7 +130,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Add CORS headers directly to all responses
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://macicast.vercel.app');
+  res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
