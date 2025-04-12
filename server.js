@@ -490,6 +490,38 @@ app.post('/api/stream/:streamId/user', async (req, res) => {
     }
 });
 
+// Update add stream endpoint
+app.post('/api/stream/:streamId/streams', async (req, res) => {
+    try {
+        const { id, name, url, type = 'user-stream' } = req.body;
+        const stream = await Stream.findById(req.params.streamId);
+        
+        if (!stream) {
+            return res.status(404).json({ error: 'Stream not found' });
+        }
+
+        await stream.addUserStream({
+            id: id || Date.now().toString(),
+            name,
+            url,
+            type,
+            status: 'active'
+        });
+        
+        res.json({
+            id: stream._id,
+            name: stream.name,
+            status: stream.status,
+            type: 'channel',
+            playbackUrl: stream.playbackUrl,
+            userStreams: stream.userStreams
+        });
+    } catch (error) {
+        console.error('Error adding stream:', error);
+        res.status(500).json({ error: 'Failed to add stream' });
+    }
+});
+
 // Serve static files
 app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
