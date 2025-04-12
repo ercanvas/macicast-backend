@@ -16,6 +16,7 @@ const fs = require('fs');          // Regular fs for sync operations
 const fsPromises = require('fs').promises;  // Promise-based fs operations
 const os = require('os');
 const youtubeUtils = require('./utils/youtube');
+const fetch = require('node-fetch');
 
 // Load environment variables first
 dotenv.config();
@@ -1001,6 +1002,100 @@ app.get('/api/youtube/stream/:streamId', async (req, res) => {
   } catch (error) {
     console.error('Error fetching YouTube stream:', error);
     res.status(500).json({ error: 'Failed to fetch stream info' });
+  }
+});
+
+// Proxy endpoint for YouTube HLS streams
+app.get('/api/youtube/hls/:videoId', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    
+    if (!videoId) {
+      return res.status(400).json({ error: 'Video ID is required' });
+    }
+    
+    console.log(`Fetching HLS stream data for YouTube video: ${videoId}`);
+    
+    // Try multiple invidious instances if one fails
+    const instances = [
+      'https://invidious.snopyta.org',
+      'https://invidious.kavin.rocks',
+      'https://vid.puffyan.us',
+      'https://invidious.flokinet.to'
+    ];
+    
+    let streamData = null;
+    let error = null;
+    
+    // Try each instance until we get a successful response
+    for (const instance of instances) {
+      try {
+        const fetchUrl = `${instance}/api/v1/videos/${videoId}`;
+        console.log(`Trying Invidious instance: ${fetchUrl}`);
+        
+        const response = await fetch(fetchUrl, { 
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Instance ${instance} returned status ${response.status}`);
+        }
+        
+        streamData = await response.json();
+        break; // Exit the loop if successful
+      } catch (err) {
+        console.error(`Error with instance ${instance}:`, err.message);
+        error = err;
+        // Continue to next instance
+      }
+    }
+    
+    if (!streamData) {
+      throw new Error(error || 'Failed to fetch from all Invidious instances');
+    }
+    
+    // Extract HLS stream URL if available
+    const hlsFormat = streamData.formatStreams?.find(f => f.type?.includes('hls')) || 
+                      streamData.adaptiveFormats?.find(f => f.type?.includes('hls'));
+    
+    if (hlsFormat && hlsFormat.url) {
+      console.log('Found HLS stream URL from Invidious');
+      return res.json({
+        success: true,
+        videoId,
+        hlsUrl: hlsFormat.url,
+        title: streamData.title,
+        author: streamData.author,
+        isLive: streamData.liveNow
+      });
+    }
+    
+    // If no HLS format found, return other available formats
+    return res.json({
+      success: true,
+      videoId,
+      title: streamData.title,
+      author: streamData.author,
+      isLive: streamData.liveNow,
+      formatStreams: streamData.formatStreams,
+      adaptiveFormats: streamData.adaptiveFormats,
+      // Fallback to highest quality format
+      fallbackUrl: streamData.formatStreams?.[0]?.url || 
+                   streamData.adaptiveFormats?.[0]?.url
+    });
+    
+  } catch (error) {
+    console.error('Error fetching YouTube HLS stream:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch YouTube stream data',
+      message: error.message,
+      // Fallback to a reliable stream in case of error
+      fallbackUrl: 'https://tv-trt1.medya.trt.com.tr/master.m3u8'
+    });
   }
 });
 
