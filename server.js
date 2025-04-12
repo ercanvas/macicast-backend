@@ -575,6 +575,7 @@ app.post('/api/stream/:streamId/streams', async (req, res) => {
 app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/youtube-streams', express.static(path.join(__dirname, 'public', 'youtube-streams')));
 
 // Add this near other middleware configuration
 app.use('/temp', express.static(TMP_DIR));
@@ -644,7 +645,7 @@ app.post('/api/youtube/channel', async (req, res) => {
     const channel = new Channel({
       name: `YouTube: ${stream.youtubeData.channelTitle}`,
       channel_number: nextChannelNumber,
-      stream_url: `/api/youtube/stream/${stream._id}/playlist.m3u8`,
+      stream_url: `${process.env.BACKEND_URL}/api/youtube/stream/${stream._id}/playlist.m3u8`,
       logo_url: stream.thumbnail,
       category: 'YouTube',
       is_active: true,
@@ -719,7 +720,7 @@ async function processYouTubeVideos(streamId) {
     
     // Update stream status
     stream.status = 'active';
-    stream.playbackUrl = `/api/youtube/stream/${streamId}/playlist.m3u8`;
+    stream.playbackUrl = `${process.env.BACKEND_URL}/api/youtube/stream/${streamId}/playlist.m3u8`;
     await stream.save();
     
     console.log(`Completed processing YouTube channel: ${stream.name}`);
@@ -755,8 +756,12 @@ app.get('/api/youtube/stream/:streamId/playlist.m3u8', async (req, res) => {
       return res.status(404).json({ error: 'No video available' });
     }
     
-    // Redirect to the video's HLS playlist
-    res.redirect(video.path.replace(__dirname, ''));
+    // Get the public URL path by removing the __dirname prefix and adding the backend URL
+    const publicPath = video.path.replace(__dirname, '').replace(/\\/g, '/');
+    const fullUrl = `${process.env.BACKEND_URL}${publicPath}`;
+    
+    // Redirect to the video's HLS playlist with complete URL
+    res.redirect(fullUrl);
   } catch (error) {
     console.error('Error serving YouTube stream:', error);
     res.status(500).json({ error: 'Failed to serve stream' });

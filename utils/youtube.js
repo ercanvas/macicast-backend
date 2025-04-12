@@ -95,7 +95,7 @@ async function downloadVideo(videoId, outputDir) {
             resolve({
               videoId,
               title: videoTitle,
-              hlsPath: path.join(hlsOutputPath, 'playlist.m3u8')
+              hlsPath: path.join(hlsOutputPath, 'playlist.m3u8').replace(/\\/g, '/')
             });
           })
           .on('error', (err) => {
