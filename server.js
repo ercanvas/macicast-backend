@@ -755,6 +755,18 @@ app.get('/api/youtube/stream/:streamId/playlist.m3u8', async (req, res) => {
     if (!video || !video.path) {
       return res.status(404).json({ error: 'No video available' });
     }
+
+    // Check if this is a proxy playlist (containing embed URL)
+    try {
+      const playlistContent = fs.readFileSync(video.path, 'utf8');
+      if (playlistContent.includes('youtube.com/embed')) {
+        // This is a proxy playlist - serve it directly
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        return res.send(playlistContent);
+      }
+    } catch (readError) {
+      console.error('Error reading playlist file:', readError);
+    }
     
     // Get the public URL path by removing the __dirname prefix and adding the backend URL
     const publicPath = video.path.replace(__dirname, '').replace(/\\/g, '/');

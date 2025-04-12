@@ -5,6 +5,9 @@ const fetch = require('node-fetch');
 const ffmpeg = require('fluent-ffmpeg');
 const Stream = require('../models/Stream');
 
+// Disable ytdl-core update check
+process.env.YTDL_NO_UPDATE = 'true';
+
 // Get YouTube channel details and videos
 async function getChannelVideos(channelName, videoCount = 10) {
   try {
@@ -55,6 +58,67 @@ async function getChannelVideos(channelName, videoCount = 10) {
 async function downloadVideo(videoId, outputDir) {
   return new Promise(async (resolve, reject) => {
     try {
+      // In production, we'll just create a mock HLS playlist that links to YouTube's direct embed
+      // This is more reliable than trying to download videos which YouTube actively blocks
+      if (process.env.NODE_ENV === 'production') {
+        const hlsOutputPath = path.join(outputDir, videoId);
+        
+        if (!fs.existsSync(hlsOutputPath)) {
+          fs.mkdirSync(hlsOutputPath, { recursive: true });
+        }
+        
+        try {
+          // Get basic video info (just for the title)
+          const videoInfo = await ytdl.getBasicInfo(videoId);
+          const videoTitle = videoInfo.videoDetails.title.replace(/[^\w\s]/gi, '');
+          
+          // Create a proxy M3U8 playlist that points to an iframe embed player
+          const proxyHlsContent = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:1
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:1.0,
+https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&enablejsapi=1
+#EXT-X-ENDLIST`;
+          
+          const playlistPath = path.join(hlsOutputPath, 'playlist.m3u8');
+          fs.writeFileSync(playlistPath, proxyHlsContent);
+          
+          console.log(`Created proxy HLS for YouTube video: ${videoTitle}`);
+          
+          resolve({
+            videoId,
+            title: videoTitle,
+            hlsPath: playlistPath.replace(/\\/g, '/'),
+            isProxy: true
+          });
+        } catch (infoError) {
+          // If we can't even get the info, create a more basic proxy
+          console.error(`Failed to get video info, creating basic proxy: ${infoError.message}`);
+          
+          const proxyHlsContent = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:1
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:1.0,
+https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0
+#EXT-X-ENDLIST`;
+          
+          const playlistPath = path.join(hlsOutputPath, 'playlist.m3u8');
+          fs.writeFileSync(playlistPath, proxyHlsContent);
+          
+          resolve({
+            videoId,
+            title: `YouTube Video ${videoId}`,
+            hlsPath: playlistPath.replace(/\\/g, '/'),
+            isProxy: true
+          });
+        }
+        
+        return;
+      }
+      
+      // For development environment, try the actual download approach
       const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
       const videoInfo = await ytdl.getInfo(videoId);
       const videoTitle = videoInfo.videoDetails.title.replace(/[^\w\s]/gi, '');
@@ -95,7 +159,8 @@ async function downloadVideo(videoId, outputDir) {
             resolve({
               videoId,
               title: videoTitle,
-              hlsPath: path.join(hlsOutputPath, 'playlist.m3u8').replace(/\\/g, '/')
+              hlsPath: path.join(hlsOutputPath, 'playlist.m3u8').replace(/\\/g, '/'),
+              isProxy: false
             });
           })
           .on('error', (err) => {
