@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');          // Regular fs for sync operations
 const fsPromises = require('fs').promises;  // Promise-based fs operations
 const os = require('os');
+const youtubeUtils = require('./utils/youtube');
 
 // Load environment variables first
 dotenv.config();
@@ -599,6 +600,198 @@ app.get('/api/mux/test', async (req, res) => {
             message: error.message
         });
     }
+});
+
+// Add YouTube search endpoint
+app.get('/api/youtube/search', async (req, res) => {
+  try {
+    const { query, videoCount } = req.query;
+    if (!query) {
+      return res.status(400).json({ error: 'Search query is required' });
+    }
+    
+    const count = parseInt(videoCount) || 10;
+    
+    const channelData = await youtubeUtils.getChannelVideos(query, count);
+    res.json(channelData);
+  } catch (error) {
+    console.error('YouTube search error:', error);
+    res.status(500).json({ 
+      error: 'Failed to search YouTube',
+      details: error.message 
+    });
+  }
+});
+
+// Create YouTube HLS channel
+app.post('/api/youtube/channel', async (req, res) => {
+  try {
+    const { channelName, videoCount } = req.body;
+    
+    if (!channelName) {
+      return res.status(400).json({ error: 'Channel name is required' });
+    }
+    
+    const count = parseInt(videoCount) || 10;
+    
+    // First create the stream entry
+    const stream = await youtubeUtils.createYouTubeChannelStream(channelName, count);
+    
+    // Then create a channel entry
+    const lastChannel = await Channel.findOne().sort('-channel_number');
+    const nextChannelNumber = lastChannel ? lastChannel.channel_number + 1 : 1;
+    
+    const channel = new Channel({
+      name: `YouTube: ${stream.youtubeData.channelTitle}`,
+      channel_number: nextChannelNumber,
+      stream_url: `/api/youtube/stream/${stream._id}/playlist.m3u8`,
+      logo_url: stream.thumbnail,
+      category: 'YouTube',
+      is_active: true,
+      is_hls: true,
+      youtube_stream_id: stream._id
+    });
+    
+    await channel.save();
+    
+    // Start processing YouTube videos in the background
+    processYouTubeVideos(stream._id);
+    
+    res.json({
+      message: 'YouTube channel created successfully',
+      stream: {
+        id: stream._id,
+        name: stream.name,
+        status: stream.status,
+        videoCount: stream.videos.length
+      },
+      channel: {
+        id: channel._id,
+        name: channel.name,
+        number: channel.channel_number
+      }
+    });
+  } catch (error) {
+    console.error('YouTube channel creation error:', error);
+    res.status(500).json({ 
+      error: 'Failed to create YouTube channel',
+      details: error.message 
+    });
+  }
+});
+
+// Process YouTube videos in the background
+async function processYouTubeVideos(streamId) {
+  try {
+    const stream = await Stream.findById(streamId);
+    if (!stream || stream.status === 'stopped') return;
+    
+    stream.status = 'processing';
+    await stream.save();
+    
+    const streamDir = path.join(__dirname, 'public', 'youtube-streams', streamId.toString());
+    if (!fs.existsSync(streamDir)) {
+      fs.mkdirSync(streamDir, { recursive: true });
+    }
+    
+    // Process each video
+    for (const video of stream.videos) {
+      if (!video.youtubeId) continue;
+      
+      try {
+        video.status = 'processing';
+        await stream.save();
+        
+        // Download and convert to HLS
+        const result = await youtubeUtils.downloadVideo(video.youtubeId, streamDir);
+        
+        // Update video status
+        video.status = 'ready';
+        video.path = result.hlsPath;
+        await stream.save();
+      } catch (error) {
+        console.error(`Error processing YouTube video ${video.youtubeId}:`, error);
+        video.status = 'error';
+        video.error = error.message;
+        await stream.save();
+      }
+    }
+    
+    // Update stream status
+    stream.status = 'active';
+    stream.playbackUrl = `/api/youtube/stream/${streamId}/playlist.m3u8`;
+    await stream.save();
+    
+    console.log(`Completed processing YouTube channel: ${stream.name}`);
+  } catch (error) {
+    console.error('Error processing YouTube videos:', error);
+  }
+}
+
+// Serve YouTube HLS stream
+app.get('/api/youtube/stream/:streamId/playlist.m3u8', async (req, res) => {
+  try {
+    const stream = await Stream.findById(req.params.streamId);
+    
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+    
+    if (stream.status !== 'active' || !stream.videos || stream.videos.length === 0) {
+      return res.status(404).json({ error: 'Stream not ready' });
+    }
+    
+    // Find ready videos
+    const readyVideos = stream.videos.filter(v => v.status === 'ready');
+    if (readyVideos.length === 0) {
+      return res.status(404).json({ error: 'No videos ready to play' });
+    }
+    
+    // Get a video (either random or sequential based on shuffle setting)
+    const video = stream.getNextYouTubeVideo();
+    await stream.save();
+    
+    if (!video || !video.path) {
+      return res.status(404).json({ error: 'No video available' });
+    }
+    
+    // Redirect to the video's HLS playlist
+    res.redirect(video.path.replace(__dirname, ''));
+  } catch (error) {
+    console.error('Error serving YouTube stream:', error);
+    res.status(500).json({ error: 'Failed to serve stream' });
+  }
+});
+
+// Get YouTube stream info
+app.get('/api/youtube/stream/:streamId', async (req, res) => {
+  try {
+    const stream = await Stream.findById(req.params.streamId);
+    
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+    
+    const readyCount = stream.videos.filter(v => v.status === 'ready').length;
+    const processingCount = stream.videos.filter(v => v.status === 'processing').length;
+    const errorCount = stream.videos.filter(v => v.status === 'error').length;
+    
+    res.json({
+      id: stream._id,
+      name: stream.name,
+      status: stream.status,
+      videoCount: stream.videos.length,
+      readyCount,
+      processingCount,
+      errorCount,
+      youtubeData: stream.youtubeData,
+      thumbnail: stream.thumbnail,
+      playbackUrl: stream.playbackUrl
+    });
+  } catch (error) {
+    console.error('Error fetching YouTube stream:', error);
+    res.status(500).json({ error: 'Failed to fetch stream info' });
+  }
 });
 
 // Error handling middleware
