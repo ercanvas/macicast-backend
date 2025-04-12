@@ -101,15 +101,44 @@ const ensureInitialData = async () => {
         if (channelCount === 0) {
             console.log('No channels found, seeding initial data...');
             try {
-                // Try to load and run seed file
-                const initialChannels = require('./seeds/initial_channels');
-                await initialChannels.seed();
-                console.log('✅ Database seeded successfully');
+                // First, convert default channels to MongoDB model format
+                const channelsToSeed = defaultChannels.map(ch => {
+                    // Remove the 'id' field as MongoDB will generate its own _id
+                    const { id, ...channelData } = ch;
+                    return channelData;
+                });
+                
+                // Insert the channels
+                await Channel.insertMany(channelsToSeed);
+                console.log(`✅ Database seeded with ${channelsToSeed.length} default channels`);
             } catch (err) {
                 console.error('Error seeding database:', err);
             }
         } else {
             console.log(`Database has ${channelCount} channels`);
+            
+            // If there are fewer than 10 channels, assume something went wrong and reseed
+            if (channelCount < 10) {
+                console.log('Fewer than 10 channels found, reseeding with default channels...');
+                try {
+                    // First, delete existing channels
+                    await Channel.deleteMany({});
+                    console.log('Existing channels deleted');
+                    
+                    // Then, convert default channels to MongoDB model format
+                    const channelsToSeed = defaultChannels.map(ch => {
+                        // Remove the 'id' field as MongoDB will generate its own _id
+                        const { id, ...channelData } = ch;
+                        return channelData;
+                    });
+                    
+                    // Insert the channels
+                    await Channel.insertMany(channelsToSeed);
+                    console.log(`✅ Database reseeded with ${channelsToSeed.length} default channels`);
+                } catch (err) {
+                    console.error('Error reseeding database:', err);
+                }
+            }
         }
     } catch (err) {
         console.error('Error checking initial data:', err);
@@ -243,6 +272,158 @@ const defaultChannels = [
     category: 'Haber',
     is_active: true,
     is_hls: true
+  },
+  {
+    id: 'default-6',
+    name: 'TRT Çocuk',
+    channel_number: 6,
+    stream_url: 'https://tv-trtcocuk.medya.trt.com.tr/master.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/TRT_%C3%87ocuk_logo_%282021%29.svg/512px-TRT_%C3%87ocuk_logo_%282021%29.svg.png',
+    category: 'Çocuk',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-7',
+    name: 'Fox TV',
+    channel_number: 7,
+    stream_url: 'https://foxtv.blutv.com/blutv_foxtv_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/FOX_TV_logo.svg/512px-FOX_TV_logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-8',
+    name: 'A Haber',
+    channel_number: 8,
+    stream_url: 'https://www.youtube.com/embed/WAWxQ6ogKcE?autoplay=1&controls=1&rel=0',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/54/A_Haber_logo.svg/512px-A_Haber_logo.svg.png',
+    category: 'Haber',
+    is_active: true,
+    is_hls: true,
+    type: 'youtube-live'
+  },
+  {
+    id: 'default-9',
+    name: 'Star TV',
+    channel_number: 9,
+    stream_url: 'https://startv.blutv.com/blutv_startv_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Star_TV_logo.svg/512px-Star_TV_logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-10',
+    name: 'Kanal D',
+    channel_number: 10,
+    stream_url: 'https://kanald.blutv.com/blutv_kanald_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Kanal_D_logo.svg/512px-Kanal_D_logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-11',
+    name: 'ATV',
+    channel_number: 11,
+    stream_url: 'https://atv.blutv.com/blutv_atv_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/Atv_logo.svg/512px-Atv_logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-12',
+    name: 'TRT Belgesel',
+    channel_number: 12,
+    stream_url: 'https://tv-trtbelgesel.medya.trt.com.tr/master.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/TRT_Belgesel_logo_%282019-%29.svg/512px-TRT_Belgesel_logo_%282019-%29.svg.png',
+    category: 'Belgesel',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-13',
+    name: 'CNN Türk',
+    channel_number: 13,
+    stream_url: 'https://cnnturk.blutv.com/blutv_cnnturk_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/CNN_T%C3%BCrk_logo.svg/512px-CNN_T%C3%BCrk_logo.svg.png',
+    category: 'Haber',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-14',
+    name: 'Habertürk',
+    channel_number: 14,
+    stream_url: 'https://haberturk.blutv.com/blutv_haberturk_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Habert%C3%BCrk_logo.svg/512px-Habert%C3%BCrk_logo.svg.png',
+    category: 'Haber',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-15',
+    name: 'TLC',
+    channel_number: 15,
+    stream_url: 'https://tlc.blutv.com/blutv_tlc_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/74/TLC_Logo.svg/512px-TLC_Logo.svg.png',
+    category: 'Belgesel',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-16',
+    name: 'DMAX',
+    channel_number: 16,
+    stream_url: 'https://dmax.blutv.com/blutv_dmax_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/98/DMAX_BLACK.svg/512px-DMAX_BLACK.svg.png',
+    category: 'Belgesel',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-17',
+    name: 'Beyaz TV',
+    channel_number: 17,
+    stream_url: 'https://beyaztv.blutv.com/blutv_beyaztv_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/tr/thumb/8/87/Beyaz_TV_logo.svg/512px-Beyaz_TV_logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-18',
+    name: 'TV8',
+    channel_number: 18,
+    stream_url: 'https://tv8.blutv.com/blutv_tv8_live/live.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/tr/thumb/3/36/TV8_Yeni_Logo.svg/512px-TV8_Yeni_Logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-19',
+    name: 'LiveNOW from FOX',
+    channel_number: 19,
+    stream_url: 'https://www.youtube.com/embed/FMX1F-G6e8w?autoplay=1&controls=1&rel=0',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9c/FOX_NOW_logo.svg/512px-FOX_NOW_logo.svg.png',
+    category: 'Haber',
+    is_active: true,
+    is_hls: true,
+    type: 'youtube-live'
+  },
+  {
+    id: 'default-20',
+    name: 'TRT Müzik',
+    channel_number: 20,
+    stream_url: 'https://tv-trtmuzik.medya.trt.com.tr/master.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/TRT_M%C3%BCzik_logo.svg/512px-TRT_M%C3%BCzik_logo.svg.png',
+    category: 'Müzik',
+    is_active: true,
+    is_hls: true
   }
 ];
 
@@ -257,14 +438,39 @@ app.get('/api/channels', async (req, res) => {
         // Check if MongoDB is connected
         if (mongoose.connection.readyState !== 1) {
             // Return default channels if no MongoDB connection
+            console.log('MongoDB not connected, returning default channels');
             return res.json(defaultChannels);
+        }
+        
+        // Check if there are any channels in the database
+        const channelCount = await Channel.countDocuments();
+        if (channelCount === 0) {
+            // If no channels found, seed the database with our default channels
+            console.log('No channels found in DB, seeding with default channels');
+            try {
+                // First, convert default channels to MongoDB model format
+                const channelsToSeed = defaultChannels.map(ch => {
+                    // Remove the 'id' field as MongoDB will generate its own _id
+                    const { id, ...channelData } = ch;
+                    return channelData;
+                });
+                
+                // Insert the channels
+                await Channel.insertMany(channelsToSeed);
+                console.log(`Inserted ${channelsToSeed.length} default channels into database`);
+            } catch (seedError) {
+                console.error('Error seeding default channels:', seedError);
+                // Return default channels if seeding fails
+                return res.json(defaultChannels);
+            }
         }
         
         const channels = await Channel.find({ is_active: true }).sort('channel_number');
         res.json(channels);
     } catch (error) {
         console.error('Error fetching channels:', error);
-        res.status(500).json({ error: 'Failed to fetch channels' });
+        // Return default channels if there's any error
+        res.json(defaultChannels);
     }
 });
 
@@ -1113,6 +1319,48 @@ app.get('/api/youtube/hls/:videoId', async (req, res) => {
       fallbackUrl: `https://www.youtube.com/watch?v=${req.params.videoId}`
     });
   }
+});
+
+// Add reset endpoint to force reinitialize channels
+app.get('/api/channels/reset', async (req, res) => {
+    try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({ 
+                error: 'Database not available',
+                message: 'MongoDB connection not active' 
+            });
+        }
+        
+        // Delete all existing channels
+        await Channel.deleteMany({});
+        console.log('All channels deleted for reset');
+        
+        // Convert default channels to MongoDB model format
+        const channelsToSeed = defaultChannels.map(ch => {
+            // Remove the 'id' field as MongoDB will generate its own _id
+            const { id, ...channelData } = ch;
+            return channelData;
+        });
+        
+        // Insert the default channels
+        await Channel.insertMany(channelsToSeed);
+        console.log(`Reset completed: Inserted ${channelsToSeed.length} default channels`);
+        
+        // Return the new list of channels
+        const channels = await Channel.find({ is_active: true }).sort('channel_number');
+        res.json({
+            success: true,
+            message: `Reset completed. ${channelsToSeed.length} channels loaded.`,
+            channels: channels
+        });
+    } catch (error) {
+        console.error('Error resetting channels:', error);
+        res.status(500).json({ 
+            error: 'Failed to reset channels',
+            message: error.message
+        });
+    }
 });
 
 // Error handling middleware
