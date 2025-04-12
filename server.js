@@ -47,21 +47,25 @@ try {
 // Set FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Use public MongoDB URL for Render deployment
+// Use public MongoDB URL for Render deployment or fallback to a local option
 const mongoUrl = process.env.MONGO_PUBLIC_URL || process.env.MONGO_URL;
 
-// Connect to MongoDB with updated configuration
+// Connect to MongoDB with configuration
+console.log('Attempting to connect to MongoDB...');
 mongoose.connect(mongoUrl, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
     serverSelectionTimeoutMS: 30000, // Timeout after 30 seconds
     socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
     family: 4 // Use IPv4, skip trying IPv6
 })
-.then(() => console.log('✅ Connected to MongoDB'))
+.then(() => {
+    console.log('✅ Connected to MongoDB');
+    // Run initial data check after connection
+    ensureInitialData();
+})
 .catch(err => {
     console.error('❌ MongoDB connection error:', err);
-    process.exit(1); // Exit if cannot connect to database
+    console.log('Continuing without MongoDB connection...');
+    // Don't exit the process, continue without MongoDB
 });
 
 // Add MongoDB connection error handler
@@ -77,8 +81,10 @@ mongoose.connection.on('disconnected', () => {
 // Add process handlers for graceful shutdown
 process.on('SIGINT', async () => {
     try {
-        await mongoose.connection.close();
-        console.log('MongoDB connection closed through app termination');
+        if (mongoose.connection.readyState) {
+            await mongoose.connection.close();
+            console.log('MongoDB connection closed through app termination');
+        }
         process.exit(0);
     } catch (err) {
         console.error('Error during shutdown:', err);
@@ -108,11 +114,6 @@ const ensureInitialData = async () => {
         console.error('Error checking initial data:', err);
     }
 };
-
-// Run after MongoDB connection is established
-mongoose.connection.once('connected', () => {
-    ensureInitialData();
-});
 
 const app = express();
 
@@ -190,9 +191,74 @@ const upload = multer({
 // Add middleware to serve temp files
 app.use('/temp', express.static(TMP_DIR));
 
-// Get all channels
+// Create default channels array for use when MongoDB is unavailable
+const defaultChannels = [
+  {
+    id: 'default-1',
+    name: 'TRT 1',
+    channel_number: 1,
+    stream_url: 'https://tv-trt1.medya.trt.com.tr/master.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/TRT_1_logo_%282021-%29.svg/512px-TRT_1_logo_%282021-%29.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-2',
+    name: 'Show TV',
+    channel_number: 2,
+    stream_url: 'https://ciner-live.daioncdn.net/showtv/showtv.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Show_TV_logo.svg/512px-Show_TV_logo.svg.png',
+    category: 'Ulusal',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-3',
+    name: 'TRT Haber',
+    channel_number: 3,
+    stream_url: 'https://tv-trthaber.medya.trt.com.tr/master.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/TRT_Haber_logo_%282013-2020%29.png/512px-TRT_Haber_logo_%282013-2020%29.png',
+    category: 'Haber',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-4',
+    name: 'TRT Spor',
+    channel_number: 4,
+    stream_url: 'https://tv-trtspor1.medya.trt.com.tr/master.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/TRT_Spor_logo_%282022%29.svg/512px-TRT_Spor_logo_%282022%29.svg.png',
+    category: 'Spor',
+    is_active: true,
+    is_hls: true
+  },
+  {
+    id: 'default-5',
+    name: 'NTV',
+    channel_number: 5,
+    stream_url: 'https://dogus-live.daioncdn.net/ntv/ntv.m3u8',
+    logo_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b5/NTV_logo.svg/512px-NTV_logo.svg.png',
+    category: 'Haber',
+    is_active: true,
+    is_hls: true
+  }
+];
+
+// Add a route to provide default channels when MongoDB is not available
+app.get('/api/default-channels', (req, res) => {
+  res.json(defaultChannels);
+});
+
+// Modify the channels endpoint to also use default channels
 app.get('/api/channels', async (req, res) => {
     try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            // Return default channels if no MongoDB connection
+            return res.json(defaultChannels);
+        }
+        
         const channels = await Channel.find({ is_active: true }).sort('channel_number');
         res.json(channels);
     } catch (error) {
@@ -205,6 +271,18 @@ app.get('/api/channels', async (req, res) => {
 app.get('/api/channels/search', async (req, res) => {
     const { q } = req.query;
     try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            // Return filtered default channels if no MongoDB connection
+            const filteredChannels = defaultChannels.filter(channel => {
+                const searchRegex = new RegExp(q, 'i');
+                return searchRegex.test(channel.name) || 
+                       searchRegex.test(channel.channel_number.toString()) || 
+                       searchRegex.test(channel.category);
+            });
+            return res.json(filteredChannels);
+        }
+        
         const channels = await Channel.find({
             is_active: true,
             $or: [
@@ -223,6 +301,11 @@ app.get('/api/channels/search', async (req, res) => {
 // Add a new channel
 app.post('/api/channels', async (req, res) => {
     try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({ error: 'Database not available' });
+        }
+        
         const channel = new Channel(req.body);
         await channel.save();
         res.json({ message: 'Channel added successfully', channel });
@@ -261,6 +344,12 @@ app.delete('/api/channels/:id', async (req, res) => {
 // Get favorite channels
 app.get('/api/favorites', async (req, res) => {
     try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            // Return empty array if no MongoDB connection
+            return res.json([]);
+        }
+        
         const favorites = await Favorite.find()
             .populate('channel_id')
             .exec();
@@ -275,6 +364,11 @@ app.get('/api/favorites', async (req, res) => {
 // Add to favorites
 app.post('/api/favorites/:channelId', async (req, res) => {
     try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({ error: 'Database not available' });
+        }
+        
         const favorite = new Favorite({ channel_id: req.params.channelId });
         await favorite.save();
         res.json({ message: 'Added to favorites' });
@@ -287,6 +381,11 @@ app.post('/api/favorites/:channelId', async (req, res) => {
 // Remove from favorites
 app.delete('/api/favorites/:channelId', async (req, res) => {
     try {
+        // Check if MongoDB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({ error: 'Database not available' });
+        }
+        
         await Favorite.findOneAndDelete({ channel_id: req.params.channelId });
         res.json({ message: 'Removed from favorites' });
     } catch (error) {
@@ -883,17 +982,8 @@ app.get('/api/status', async (req, res) => {
     }
 });
 
-// Add user routes
-const userRoutes = require('./routes/users');
-app.use('/api/users', userRoutes);
-
-// Add JWT_SECRET to environment variables if not present
-if (!process.env.JWT_SECRET) {
-  console.warn('⚠️ JWT_SECRET not set in environment variables. Using a default secret (not secure for production)');
-  process.env.JWT_SECRET = 'macicast-default-jwt-secret-key-change-in-production';
-}
-
+// When deploying on Render, use PORT environment variable
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
 });
