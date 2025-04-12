@@ -58,123 +58,66 @@ async function getChannelVideos(channelName, videoCount = 10) {
 async function downloadVideo(videoId, outputDir) {
   return new Promise(async (resolve, reject) => {
     try {
-      // In production, we'll just create a mock HLS playlist that links to YouTube's direct embed
-      // This is more reliable than trying to download videos which YouTube actively blocks
-      if (process.env.NODE_ENV === 'production') {
-        const hlsOutputPath = path.join(outputDir, videoId);
-        
-        if (!fs.existsSync(hlsOutputPath)) {
-          fs.mkdirSync(hlsOutputPath, { recursive: true });
-        }
-        
-        try {
-          // Get basic video info (just for the title)
-          const videoInfo = await ytdl.getBasicInfo(videoId);
-          const videoTitle = videoInfo.videoDetails.title.replace(/[^\w\s]/gi, '');
-          
-          // Create a proxy M3U8 playlist that points to an iframe embed player
-          const proxyHlsContent = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:1
-#EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:1.0,
-https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&enablejsapi=1
-#EXT-X-ENDLIST`;
-          
-          const playlistPath = path.join(hlsOutputPath, 'playlist.m3u8');
-          fs.writeFileSync(playlistPath, proxyHlsContent);
-          
-          console.log(`Created proxy HLS for YouTube video: ${videoTitle}`);
-          
-          resolve({
-            videoId,
-            title: videoTitle,
-            hlsPath: playlistPath.replace(/\\/g, '/'),
-            isProxy: true
-          });
-        } catch (infoError) {
-          // If we can't even get the info, create a more basic proxy
-          console.error(`Failed to get video info, creating basic proxy: ${infoError.message}`);
-          
-          const proxyHlsContent = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:1
-#EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:1.0,
-https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0
-#EXT-X-ENDLIST`;
-          
-          const playlistPath = path.join(hlsOutputPath, 'playlist.m3u8');
-          fs.writeFileSync(playlistPath, proxyHlsContent);
-          
-          resolve({
-            videoId,
-            title: `YouTube Video ${videoId}`,
-            hlsPath: playlistPath.replace(/\\/g, '/'),
-            isProxy: true
-          });
-        }
-        
-        return;
-      }
-      
-      // For development environment, try the actual download approach
-      const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const videoInfo = await ytdl.getInfo(videoId);
-      const videoTitle = videoInfo.videoDetails.title.replace(/[^\w\s]/gi, '');
-      
-      const tempFilePath = path.join(outputDir, `${videoId}.mp4`);
+      // Create a YouTube direct player iframe embed
       const hlsOutputPath = path.join(outputDir, videoId);
       
       if (!fs.existsSync(hlsOutputPath)) {
         fs.mkdirSync(hlsOutputPath, { recursive: true });
       }
       
-      console.log(`Downloading video: ${videoTitle}`);
+      // Create a direct iframe embed HTML file that will play the YouTube video
+      const iframeHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Player</title>
+  <style>
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    iframe { width: 100%; height: 100%; border: 0; }
+  </style>
+</head>
+<body>
+  <iframe 
+    src="https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&rel=0&showinfo=0&modestbranding=1" 
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+    allowfullscreen>
+  </iframe>
+</body>
+</html>`;
+
+      const htmlPath = path.join(hlsOutputPath, 'player.html');
+      fs.writeFileSync(htmlPath, iframeHtml);
       
-      // Download the video
-      ytdl(videoUrl, { 
-        quality: 'highest',
-        filter: 'audioandvideo' 
-      })
-      .pipe(fs.createWriteStream(tempFilePath))
-      .on('finish', () => {
-        console.log(`Download completed: ${videoTitle}`);
-        
-        // Convert to HLS
-        ffmpeg(tempFilePath)
-          .outputOptions([
-            '-c:v h264',
-            '-c:a aac',
-            '-hls_time 10',
-            '-hls_list_size 0',
-            '-hls_segment_filename', path.join(hlsOutputPath, 'segment%03d.ts'),
-            '-f hls'
-          ])
-          .output(path.join(hlsOutputPath, 'playlist.m3u8'))
-          .on('end', () => {
-            console.log(`HLS conversion completed: ${videoTitle}`);
-            // Delete the temporary file
-            fs.unlinkSync(tempFilePath);
-            resolve({
-              videoId,
-              title: videoTitle,
-              hlsPath: path.join(hlsOutputPath, 'playlist.m3u8').replace(/\\/g, '/'),
-              isProxy: false
-            });
-          })
-          .on('error', (err) => {
-            console.error(`Error converting video to HLS: ${err.message}`);
-            reject(err);
-          })
-          .run();
-      })
-      .on('error', (err) => {
-        console.error(`Error downloading video: ${err.message}`);
-        reject(err);
+      // Instead of trying to create an HLS playlist that references the YouTube embed,
+      // we'll create a simple HTML redirect that will open the player page directly
+      // This avoids CORS issues with HLS.js trying to fetch YouTube content directly
+      
+      const redirectHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0;URL='${process.env.BACKEND_URL}/youtube-streams/${path.basename(outputDir)}/${videoId}/player.html'" />
+  <title>Redirecting to YouTube Player</title>
+</head>
+<body>
+  <p>Redirecting to player...</p>
+</body>
+</html>`;
+      
+      const redirectPath = path.join(hlsOutputPath, 'redirect.html');
+      fs.writeFileSync(redirectPath, redirectHtml);
+      
+      console.log(`Created YouTube iframe player for: ${videoId}`);
+      
+      resolve({
+        videoId,
+        title: videoId, // Just use the ID as title
+        hlsPath: redirectPath.replace(/\\/g, '/'),
+        isProxy: true
       });
     } catch (error) {
-      console.error('Error processing YouTube video:', error);
+      console.error('Error creating YouTube proxy:', error);
       reject(error);
     }
   });

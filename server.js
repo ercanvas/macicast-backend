@@ -577,6 +577,23 @@ app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-str
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/youtube-streams', express.static(path.join(__dirname, 'public', 'youtube-streams')));
 
+// Set content type for .m3u8 files to ensure proper handling
+app.use((req, res, next) => {
+  if (req.path.endsWith('.m3u8')) {
+    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+  }
+  
+  // Add special handling for YouTube stream HTML files
+  if (req.path.includes('/youtube-streams/') && (req.path.endsWith('.html') || req.path.endsWith('.htm'))) {
+    // Set headers to allow embedding in iframes
+    res.set('Content-Type', 'text/html');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('X-Frame-Options', 'ALLOWALL');
+  }
+  
+  next();
+});
+
 // Add this near other middleware configuration
 app.use('/temp', express.static(TMP_DIR));
 
@@ -700,36 +717,31 @@ async function processYouTubeVideos(streamId) {
       if (!video.youtubeId) continue;
       
       try {
-        video.status = 'processing';
-        await stream.save();
-        
-        // Download and convert to HLS
+        // Create an iframe HTML player for this video
         const result = await youtubeUtils.downloadVideo(video.youtubeId, streamDir);
         
-        // Update video status
+        // Mark as ready
         video.status = 'ready';
         video.path = result.hlsPath;
-        await stream.save();
       } catch (error) {
-        console.error(`Error processing YouTube video ${video.youtubeId}:`, error);
+        console.error(`Error creating YouTube player for ${video.youtubeId}:`, error);
         video.status = 'error';
         video.error = error.message;
-        await stream.save();
       }
     }
     
     // Update stream status
     stream.status = 'active';
-    stream.playbackUrl = `${process.env.BACKEND_URL}/api/youtube/stream/${streamId}/playlist.m3u8`;
+    stream.playbackUrl = `${process.env.BACKEND_URL}/api/youtube/stream/${streamId}/player`;
     await stream.save();
     
-    console.log(`Completed processing YouTube channel: ${stream.name}`);
+    console.log(`Completed processing YouTube channel: ${stream.name} with ${stream.videos.length} videos`);
   } catch (error) {
     console.error('Error processing YouTube videos:', error);
   }
 }
 
-// Serve YouTube HLS stream
+// Serve YouTube HLS stream - modified to use redirect approach
 app.get('/api/youtube/stream/:streamId/playlist.m3u8', async (req, res) => {
   try {
     const stream = await Stream.findById(req.params.streamId);
@@ -756,27 +768,51 @@ app.get('/api/youtube/stream/:streamId/playlist.m3u8', async (req, res) => {
       return res.status(404).json({ error: 'No video available' });
     }
 
-    // Check if this is a proxy playlist (containing embed URL)
-    try {
-      const playlistContent = fs.readFileSync(video.path, 'utf8');
-      if (playlistContent.includes('youtube.com/embed')) {
-        // This is a proxy playlist - serve it directly
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        return res.send(playlistContent);
-      }
-    } catch (readError) {
-      console.error('Error reading playlist file:', readError);
-    }
-    
-    // Get the public URL path by removing the __dirname prefix and adding the backend URL
+    // Get the public URL path for our redirect page
     const publicPath = video.path.replace(__dirname, '').replace(/\\/g, '/');
     const fullUrl = `${process.env.BACKEND_URL}${publicPath}`;
     
-    // Redirect to the video's HLS playlist with complete URL
+    // Redirect to the player page
     res.redirect(fullUrl);
   } catch (error) {
     console.error('Error serving YouTube stream:', error);
     res.status(500).json({ error: 'Failed to serve stream' });
+  }
+});
+
+// Add direct access to YouTube player via ID
+app.get('/api/youtube/stream/:streamId/player', async (req, res) => {
+  try {
+    const stream = await Stream.findById(req.params.streamId);
+    
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+    
+    // Find ready videos
+    const readyVideos = stream.videos.filter(v => v.status === 'ready');
+    if (readyVideos.length === 0) {
+      return res.status(404).json({ error: 'No videos ready to play' });
+    }
+    
+    // Get a video (either random or sequential based on shuffle setting)
+    const video = stream.getNextYouTubeVideo();
+    await stream.save();
+    
+    if (!video || !video.path) {
+      return res.status(404).json({ error: 'No video available' });
+    }
+    
+    // We need to extract the path to the player.html file instead of redirect.html
+    let playerPath = video.path.replace('redirect.html', 'player.html');
+    playerPath = playerPath.replace(__dirname, '').replace(/\\/g, '/');
+    const fullUrl = `${process.env.BACKEND_URL}${playerPath}`;
+    
+    // Redirect directly to the player
+    res.redirect(fullUrl);
+  } catch (error) {
+    console.error('Error serving YouTube stream player:', error);
+    res.status(500).json({ error: 'Failed to serve player' });
   }
 });
 
@@ -850,6 +886,16 @@ app.get('/api/status', async (req, res) => {
         });
     }
 });
+
+// Add user routes
+const userRoutes = require('./routes/users');
+app.use('/api/users', userRoutes);
+
+// Add JWT_SECRET to environment variables if not present
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️ JWT_SECRET not set in environment variables. Using a default secret (not secure for production)');
+  process.env.JWT_SECRET = 'macicast-default-jwt-secret-key-change-in-production';
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
