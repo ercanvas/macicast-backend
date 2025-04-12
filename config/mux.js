@@ -1,4 +1,4 @@
-const Mux = require('@mux/mux-node');
+const { Mux } = require('@mux/mux-node');
 
 console.log('Initializing Mux configuration...');
 console.log('Environment:', process.env.NODE_ENV || 'development');
@@ -9,19 +9,16 @@ if (!process.env.MUX_TOKEN_ID || !process.env.MUX_TOKEN_SECRET) {
 
 try {
     // Initialize Mux client with production credentials
-    const muxClient = new Mux({
+    const { video } = new Mux({
         tokenId: process.env.MUX_TOKEN_ID,
-        tokenSecret: process.env.MUX_TOKEN_SECRET,
-        defaultEnvironmentId: 'production' // Explicitly set to production
+        tokenSecret: process.env.MUX_TOKEN_SECRET
     });
 
     console.log('Mux client created successfully');
     console.log('Using Token ID:', process.env.MUX_TOKEN_ID);
 
-    const Video = muxClient.Video;
-    
     // Verify the connection with production credentials
-    Video.Assets.list({ limit: 1 })
+    video.assets.list({ limit: 1 })
         .then(() => {
             console.log('✅ Mux Video API connection verified (Production)');
         })
@@ -29,7 +26,7 @@ try {
             console.error('❌ Mux Video API test failed:', err);
         });
 
-    module.exports = { Video };
+    module.exports = { Video: video };
 } catch (error) {
     console.error('Mux initialization error:', error);
     throw error;

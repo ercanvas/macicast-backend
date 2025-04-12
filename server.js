@@ -371,7 +371,7 @@ async function processNextVideo(streamId) {
         await stream.save();
 
         if (process.env.STREAM_PROVIDER === 'mux') {
-            if (!Video || !Video.Assets) {
+            if (!Video) {
                 throw new Error('Mux Video client not available');
             }
             
@@ -382,7 +382,7 @@ async function processNextVideo(streamId) {
 
             try {
                 // Create Mux Asset using public URL
-                const asset = await Video.Assets.create({
+                const asset = await Video.assets.create({
                     input: publicUrl,
                     playback_policy: ['public']
                 });
