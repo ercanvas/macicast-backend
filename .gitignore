@@ -1,0 +1,6 @@
+/uploads/*
+/public/streams/*
+/public/temp-streams/*
+!/uploads/.gitkeep
+!/public/streams/.gitkeep
+!/public/temp-streams/.gitkeep
