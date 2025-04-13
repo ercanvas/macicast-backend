@@ -18,6 +18,9 @@ const os = require('os');
 const youtubeUtils = require('./utils/youtube');
 const fetch = require('node-fetch');
 
+// Import route files
+const authRoutes = require('./routes/auth');
+
 // Load environment variables first
 dotenv.config();
 
@@ -172,6 +175,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Mount routes
+app.use('/api/auth', authRoutes);
 
 // Ensure required directories exist
 const ensureDirectories = () => {
