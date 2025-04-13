@@ -453,4 +453,63 @@ router.delete('/watch-party/:partyId', auth, async (req, res) => {
   }
 });
 
+// @route   GET api/channels
+// @desc    Get all channels
+// @access  Public
+router.get('/', async (req, res) => {
+  try {
+    const channels = await Channel.find();
+    res.json(channels);
+  } catch (err) {
+    console.error('Error fetching channels:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// @route   DELETE api/channels/purge
+// @desc    Delete all channels from the database
+// @access  Public (for development)
+router.delete('/purge', async (req, res) => {
+  try {
+    const result = await Channel.deleteMany({});
+    console.log(`All channels deleted from database: ${result.deletedCount} channels removed`);
+    
+    // Return empty array in channels field to ensure frontend knows there are no channels
+    res.json({ 
+      success: true, 
+      message: `All channels deleted from database: ${result.deletedCount} channels removed`, 
+      channels: [] 
+    });
+  } catch (err) {
+    console.error('Error deleting channels:', err);
+    res.status(500).json({ success: false, error: 'Server error', message: err.message });
+  }
+});
+
+// @route   POST api/channels
+// @desc    Create a new channel
+// @access  Public
+router.post('/', async (req, res) => {
+  try {
+    const { name, description, isPublic } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Channel name is required' });
+    }
+    
+    const channel = new Channel({
+      name,
+      description,
+      isPublic: isPublic || false
+    });
+    
+    await channel.save();
+    
+    res.json(channel);
+  } catch (err) {
+    console.error('Error creating channel:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router; 

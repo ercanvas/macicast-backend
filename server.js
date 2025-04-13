@@ -101,48 +101,8 @@ const ensureInitialData = async () => {
     try {
         // Check if we have any channels
         const channelCount = await Channel.countDocuments();
-        if (channelCount === 0) {
-            console.log('No channels found, seeding initial data...');
-            try {
-                // First, convert default channels to MongoDB model format
-                const channelsToSeed = defaultChannels.map(ch => {
-                    // Remove the 'id' field as MongoDB will generate its own _id
-                    const { id, ...channelData } = ch;
-                    return channelData;
-                });
-                
-                // Insert the channels
-                await Channel.insertMany(channelsToSeed);
-                console.log(`✅ Database seeded with ${channelsToSeed.length} default channels`);
-            } catch (err) {
-                console.error('Error seeding database:', err);
-            }
-        } else {
-            console.log(`Database has ${channelCount} channels`);
-            
-            // If there are fewer than 10 channels, assume something went wrong and reseed
-            if (channelCount < 10) {
-                console.log('Fewer than 10 channels found, reseeding with default channels...');
-                try {
-                    // First, delete existing channels
-                    await Channel.deleteMany({});
-                    console.log('Existing channels deleted');
-                    
-                    // Then, convert default channels to MongoDB model format
-                    const channelsToSeed = defaultChannels.map(ch => {
-                        // Remove the 'id' field as MongoDB will generate its own _id
-                        const { id, ...channelData } = ch;
-                        return channelData;
-                    });
-                    
-                    // Insert the channels
-                    await Channel.insertMany(channelsToSeed);
-                    console.log(`✅ Database reseeded with ${channelsToSeed.length} default channels`);
-                } catch (err) {
-                    console.error('Error reseeding database:', err);
-                }
-            }
-        }
+        console.log(`Database has ${channelCount} channels`);
+        // No auto-seeding anymore
     } catch (err) {
         console.error('Error checking initial data:', err);
     }
@@ -178,6 +138,7 @@ app.use((req, res, next) => {
 
 // Mount routes
 app.use('/api/auth', authRoutes);
+app.use('/api/channels', require('./routes/channels'));
 
 // Ensure required directories exist
 const ensureDirectories = () => {
