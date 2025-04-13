@@ -4,13 +4,59 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure storage for profile images
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadsDir = path.join(__dirname, '../uploads/profiles');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'profile-' + uniqueSuffix + ext);
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
 
 // @route   POST api/auth/register
 // @desc    Register a user
 // @access  Public
-router.post('/register', async (req, res) => {
+router.post('/register', upload.single('profileImage'), async (req, res) => {
   try {
+    console.log('Register request received:', req.body);
+    
+    // Extract fields from request body
     const { username, email, password, displayName } = req.body;
+    
+    // Validate required fields
+    if (!username || !email || !password) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        details: {
+          username: !username ? 'Username is required' : null,
+          email: !email ? 'Email is required' : null,
+          password: !password ? 'Password is required' : null
+        }
+      });
+    }
 
     // Check if user already exists
     let user = await User.findOne({ $or: [{ email }, { username }] });
@@ -22,12 +68,20 @@ router.post('/register', async (req, res) => {
       }
     }
 
+    // Handle profile image if uploaded
+    let profilePicture = '/default-avatar.png';
+    if (req.file) {
+      // Create relative path for storage
+      profilePicture = `/uploads/profiles/${req.file.filename}`;
+    }
+
     // Create new user
     user = new User({
       username,
       email,
       password,
       displayName: displayName || username,
+      profilePicture,
       // Create a default channel list
       channelLists: [{ 
         name: 'My Channels', 
@@ -71,8 +125,11 @@ router.post('/register', async (req, res) => {
       }
     );
   } catch (err) {
-    console.error('Registration error:', err.message);
-    res.status(500).json({ error: 'Server error during registration' });
+    console.error('Registration error:', err);
+    res.status(500).json({ 
+      error: 'Server error during registration', 
+      message: err.message 
+    });
   }
 });
 

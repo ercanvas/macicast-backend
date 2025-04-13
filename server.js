@@ -185,7 +185,8 @@ const ensureDirectories = () => {
     path.join(__dirname, 'public'),
     path.join(__dirname, 'public/temp-streams'),
     path.join(__dirname, 'public/streams'),
-    path.join(__dirname, 'uploads')
+    path.join(__dirname, 'uploads'),
+    path.join(__dirname, 'uploads/profiles')
   ];
 
   dirs.forEach(dir => {
@@ -883,6 +884,7 @@ app.post('/api/stream/:streamId/streams', async (req, res) => {
 app.use('/streams', express.static(path.join(__dirname, 'public', 'streams')));
 app.use('/temp-streams', express.static(path.join(__dirname, 'public', 'temp-streams')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads/profiles', express.static(path.join(__dirname, 'uploads', 'profiles')));
 app.use('/youtube-streams', express.static(path.join(__dirname, 'public', 'youtube-streams')));
 
 // Set content type for .m3u8 files to ensure proper handling
@@ -1371,10 +1373,30 @@ app.get('/api/channels/reset', async (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
+    console.error('Server error:', err);
+    
+    // Handle multer errors specifically
+    if (err.name === 'MulterError') {
+        return res.status(400).json({
+            message: 'File upload error',
+            error: err.message,
+            code: err.code
+        });
+    }
+    
+    // Return more detailed error information in development
+    if (process.env.NODE_ENV === 'development') {
+        return res.status(500).json({
+            message: 'Something went wrong!',
+            error: err.message,
+            stack: err.stack
+        });
+    }
+    
+    // Simplified error in production
     res.status(500).json({
         message: 'Something went wrong!',
-        error: process.env.NODE_ENV === 'development' ? err.message : {}
+        error: err.message
     });
 });
 
